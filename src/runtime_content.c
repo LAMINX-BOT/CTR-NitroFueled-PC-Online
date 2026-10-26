@@ -43,6 +43,8 @@ static ABI int32_t module_load(uint16_t id) {
     if (id==0xb4) require_provider();
     if (module_refs[id]==UINT32_MAX) { fputs("STOP: module reference overflow\n",stderr); exit(21); }
     ++module_refs[id];
+    /* CTR-NitroFueled-PC: online dialogs (runtime_online.c); nothing when offline. */
+    if (id==0xa2 || id==0xb2) { int32_t online=runtime_online_module(id,1); if (online) { --module_refs[id]; return online; } }
     if (id==0xb4) { refs=module_refs[id]; printf("Runtime: AppContent host provider loaded; references=%u\n",refs); }
     else printf("Runtime: system module 0x%x loaded (host implementation)\n",id);
     return 0;
@@ -63,6 +65,7 @@ static ABI int32_t module_loaded(uint16_t id) {
 static ABI int32_t module_unload(uint16_t id) {
     int32_t result=module_loaded(id);
     if (result) return result;
+    if (id==0xa2) { int32_t online=runtime_online_module(id,0); if (online) return online; }
     --module_refs[id];
     if (id==0xb4) { refs=module_refs[id]; if (!refs) initialized=0; }
     return 0;

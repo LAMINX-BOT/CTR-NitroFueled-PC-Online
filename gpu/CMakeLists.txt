@@ -253,6 +253,7 @@ if (WIN32)
     # The launcher (CTR-NitroFueled-PC.exe, launcher/windows): Dear ImGui on Win32 + Direct3D 11,
     # linked statically, so the .exe next to run.py needs no DLL from bin\.
     add_executable(ctr-launcher WIN32 ../launcher/windows/launcher.cpp ../launcher/windows/gamepads.cpp
+        ../launcher/windows/online.cpp ../launcher/windows/arabic.cpp
         third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_win32.cpp
         third_party/imgui/backends/imgui_impl_dx11.cpp ../packaging/windows/launcher.rc)
@@ -260,8 +261,45 @@ if (WIN32)
     target_include_directories(ctr-launcher PRIVATE third_party/imgui third_party/imgui/backends ${SDL3_INCLUDE_DIRS})
     target_compile_definitions(ctr-launcher PRIVATE UNICODE _UNICODE)
     target_link_options(ctr-launcher PRIVATE -static -municode -s)
-    target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt)
+    target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt
+        ctr_online_service)
     set_target_properties(ctr-launcher PROPERTIES OUTPUT_NAME CTR-NitroFueled-PC INTERPROCEDURAL_OPTIMIZATION OFF)
+
+    # Online play (online/, from guzuold/CTRNativePorted, GPL-2.0): ctr_online.dll holds the
+    # guest NP, Net, Http and WebApi functions; sacredfire.exe loads it only with CTR_ONLINE=1
+    # (src/runtime_online.c). The launcher hosts the online service (online/online_server).
+    file(GLOB CTR_ONLINE_HLE CONFIGURE_DEPENDS ../online/hle/*.cpp)
+    add_library(ctr_online SHARED ${CTR_ONLINE_HLE} ../online/online_server/json.cpp)
+    target_compile_definitions(ctr_online PRIVATE CTR_HLE_BUILD WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(ctr_online PRIVATE -Wno-unknown-pragmas)
+    target_link_options(ctr_online PRIVATE -static -s)
+    target_link_libraries(ctr_online PRIVATE ws2_32 iphlpapi user32 gdi32 gdiplus shlwapi bcrypt crypt32)
+    set_target_properties(ctr_online PROPERTIES PREFIX "" INTERPROCEDURAL_OPTIMIZATION OFF)
+    set(CTR_ONLINE_SERVICE ../online/online_server/json.cpp ../online/online_server/crypto.cpp
+        ../online/online_server/protocol.cpp ../online/online_server/stores.cpp ../online/online_server/relay.cpp
+        ../online/online_server/server.cpp ../online/online_server/upnp.cpp ../online/online_server/launcher_online.cpp
+        ../online/online_server/friend_identity.cpp ../online/online_server/dht_service.cpp
+        ../online/online_server/friend_verifier.cpp ../online/online_server/friend_store.cpp
+        ../online/online_server/party_lobby.cpp ../online/online_server/friend_network.cpp ../online/dht/dht.c)
+    add_library(ctr_online_service STATIC ${CTR_ONLINE_SERVICE})
+    target_compile_definitions(ctr_online_service PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(ctr_online_service PRIVATE -Wno-unknown-pragmas -w)
+    target_include_directories(ctr_online_service PUBLIC ../online/online_server)
+    target_link_libraries(ctr_online_service PUBLIC ws2_32 iphlpapi bcrypt crypt32 ole32 oleaut32)
+    set_target_properties(ctr_online_service PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+    # The same service on its own (diagnostics, a dedicated always-on host).
+    add_executable(ctr_online_server ../online/online_server/server_main.cpp)
+    target_link_libraries(ctr_online_server PRIVATE ctr_online_service)
+    target_link_options(ctr_online_server PRIVATE -static -s)
+    # The upstream online test suites, unchanged (run from a folder holding
+    # build/CTRPort-gpu/ctr_hle.dll, a copy of ctr_online.dll).
+    add_executable(online-server-test EXCLUDE_FROM_ALL ../online/online_server/server_test.cpp)
+    target_link_libraries(online-server-test PRIVATE ctr_online_service)
+    target_compile_options(online-server-test PRIVATE -w)
+    add_executable(online-hle-test EXCLUDE_FROM_ALL ../online/hle_tests/online_services_test.cpp)
+    target_compile_definitions(online-hle-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(online-hle-test PRIVATE -w)
+    target_link_libraries(online-hle-test PRIVATE ws2_32 crypt32 bcrypt)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.

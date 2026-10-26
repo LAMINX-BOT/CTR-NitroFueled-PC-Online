@@ -292,25 +292,27 @@ Family FamilyOf(int type) {
     }
 }
 
-std::string TypeName(int type, bool es) {
+std::string TypeName(int type, bool ar) {
     switch (type) {
     case SDL_GAMEPAD_TYPE_XBOX360: return "Xbox 360";
     case SDL_GAMEPAD_TYPE_XBOXONE: return "Xbox One / Series";
     case SDL_GAMEPAD_TYPE_PS3: return "DualShock 3 (PS3)";
     case SDL_GAMEPAD_TYPE_PS4: return "DualShock 4 (PS4)";
     case SDL_GAMEPAD_TYPE_PS5: return "DualSense (PS5)";
-    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: return es ? "Mando Pro de Switch" : "Switch Pro Controller";
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: return ar ? "يد Switch Pro" : "Switch Pro Controller";
     case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
     case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
     case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: return "Joy-Con";
     case SDL_GAMEPAD_TYPE_GAMECUBE: return "GameCube";
+#if SDL_VERSION_ATLEAST(3, 4, 18)
     case SDL_GAMEPAD_TYPE_STEAM: return "Steam";
-    case SDL_GAMEPAD_TYPE_STANDARD: return es ? "Mando estándar (XInput)" : "Standard gamepad (XInput)";
-    default: return es ? "Mando genérico" : "Generic gamepad";
+#endif
+    case SDL_GAMEPAD_TYPE_STANDARD: return ar ? "يد تحكم قياسية (XInput)" : "Standard gamepad (XInput)";
+    default: return ar ? "يد تحكم عامة" : "Generic gamepad";
     }
 }
 
-std::string Label(int input, Family family, int type, bool es) {
+std::string Label(int input, Family family, int type, bool ar) {
     const bool ps = family == Family::PlayStation, nin = family == Family::Nintendo;
     switch (input) {
     case BtnSouth:
@@ -326,16 +328,15 @@ std::string Label(int input, Family family, int type, bool es) {
         case SDL_GAMEPAD_BUTTON_LABEL_B: return "B";
         case SDL_GAMEPAD_BUTTON_LABEL_X: return "X";
         case SDL_GAMEPAD_BUTTON_LABEL_Y: return "Y";
-        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return es ? "Cruz \xE2\x9C\x95" : "Cross \xE2\x9C\x95";
-        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return es ? "C\xC3\xADrculo \xE2\x97\x8B" : "Circle \xE2\x97\x8B";
-        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return es ? "Cuadrado \xE2\x96\xA1" : "Square \xE2\x96\xA1";
-        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return es ? "Tri\xC3\xA1ngulo \xE2\x96\xB3" : "Triangle \xE2\x96\xB3";
+        case SDL_GAMEPAD_BUTTON_LABEL_CROSS: return ar ? "X \xE2\x9C\x95" : "Cross \xE2\x9C\x95";
+        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE: return ar ? "دائرة \xE2\x97\x8B" : "Circle \xE2\x97\x8B";
+        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE: return ar ? "مربع \xE2\x96\xA1" : "Square \xE2\x96\xA1";
+        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE: return ar ? "مثلث \xE2\x96\xB3" : "Triangle \xE2\x96\xB3";
         default: break;
         }
-        static const char* const es_pos[] = {"Bot\xC3\xB3n de abajo", "Bot\xC3\xB3n derecho", "Bot\xC3\xB3n izquierdo",
-                                              "Bot\xC3\xB3n de arriba"};
+        static const char* const ar_pos[] = {"الزر السفلي", "الزر الأيمن", "الزر الأيسر", "الزر العلوي"};
         static const char* const en_pos[] = {"Bottom button", "Right button", "Left button", "Top button"};
-        return es ? es_pos[input] : en_pos[input];
+        return ar ? ar_pos[input] : en_pos[input];
     }
     case BtnBack:
         if (ps) return type == SDL_GAMEPAD_TYPE_PS5 ? "Create" : type == SDL_GAMEPAD_TYPE_PS3 ? "Select" : "Share";
@@ -346,25 +347,25 @@ std::string Label(int input, Family family, int type, bool es) {
         if (ps) return type == SDL_GAMEPAD_TYPE_PS3 ? "Start" : "Options";
         if (nin) return "+ (Plus)";
         return type == SDL_GAMEPAD_TYPE_XBOXONE ? "Menu" : "Start";
-    case BtnLeftStick: return ps ? "L3" : es ? "Stick izq. (pulsar)" : "Left stick (click)";
-    case BtnRightStick: return ps ? "R3" : es ? "Stick der. (pulsar)" : "Right stick (click)";
+    case BtnLeftStick: return ps ? "L3" : ar ? "العصا اليسرى (ضغط)" : "Left stick (click)";
+    case BtnRightStick: return ps ? "R3" : ar ? "العصا اليمنى (ضغط)" : "Right stick (click)";
     case BtnLeftShoulder: return ps ? "L1" : nin ? "L" : "LB";
     case BtnRightShoulder: return ps ? "R1" : nin ? "R" : "RB";
     case BtnLeftTrigger: return ps ? "L2" : nin ? "ZL" : "LT";
     case BtnRightTrigger: return ps ? "R2" : nin ? "ZR" : "RT";
-    case BtnDpadUp: return es ? "Cruceta \xE2\x86\x91" : "D-pad \xE2\x86\x91";
-    case BtnDpadDown: return es ? "Cruceta \xE2\x86\x93" : "D-pad \xE2\x86\x93";
-    case BtnDpadLeft: return es ? "Cruceta \xE2\x86\x90" : "D-pad \xE2\x86\x90";
-    case BtnDpadRight: return es ? "Cruceta \xE2\x86\x92" : "D-pad \xE2\x86\x92";
+    case BtnDpadUp: return ar ? "الأسهم \xE2\x86\x91" : "D-pad \xE2\x86\x91";
+    case BtnDpadDown: return ar ? "الأسهم \xE2\x86\x93" : "D-pad \xE2\x86\x93";
+    case BtnDpadLeft: return ar ? "الأسهم \xE2\x86\x90" : "D-pad \xE2\x86\x90";
+    case BtnDpadRight: return ar ? "الأسهم \xE2\x86\x92" : "D-pad \xE2\x86\x92";
     case BtnMisc1:
-        if (ps) return es ? "Micr\xC3\xB3" "fono" : "Mic";
-        if (nin) return es ? "Captura" : "Capture";
+        if (ps) return ar ? "الميكروفون" : "Mic";
+        if (nin) return ar ? "التقاط" : "Capture";
         return "Share";
     case BtnRightPaddle1: return "P1";
     case BtnLeftPaddle1: return "P3";
     case BtnRightPaddle2: return "P2";
     case BtnLeftPaddle2: return "P4";
-    case BtnTouchpad: return es ? "Panel t\xC3\xA1""ctil" : "Touchpad";
+    case BtnTouchpad: return ar ? "لوحة اللمس" : "Touchpad";
     default:
         if (input >= BtnMisc2 && input <= BtnMisc6) return "Misc " + std::to_string(input - BtnMisc2 + 2);
         return "?";

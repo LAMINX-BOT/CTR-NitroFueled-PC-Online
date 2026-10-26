@@ -201,6 +201,9 @@ def main():
     p.add_argument('--version', default='')
     p.add_argument('--dist', type=Path, default=ROOT / 'dist')
     p.add_argument('--dlss-sdk', type=Path, help='NVIDIA DLSS SDK folder: bundle DLSS')
+    p.add_argument('--dlss-from', type=Path,
+                   help='bin\ of an official portable package: bundle its DLSS bridge and nvngx_dlss.dll')
+    p.add_argument('--name', default=NAME, help='package folder name')
     a = p.parse_args()
     dlss_files = []
     if a.dlss_sdk:
@@ -209,12 +212,19 @@ def main():
         for f in dlss_files + [a.dlss_sdk / 'LICENSE.txt']:
             if not f.is_file():
                 sys.exit(f'{f} not found (dlss_bridge\\build.bat builds the bridge)')
+    if a.dlss_from:
+        dlss_files = [a.dlss_from / 'sacredfire_dlss.dll', a.dlss_from / 'nvngx_dlss.dll']
+        for f in dlss_files + [a.dlss_from.parent / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt']:
+            if not f.is_file():
+                sys.exit(f'{f} not found')
     exe, caps = ROOT / 'out' / 'sacredfire.exe', ROOT / 'out' / 'bb-gpu-capabilities.exe'
+    # Online play (online/): the guest functions and the standalone service.
+    online = [ROOT / 'out' / 'ctr_online.dll', ROOT / 'out' / 'ctr_online_server.exe']
     launcher = ROOT / 'out' / LAUNCHER
-    for f in (exe, caps, launcher):
+    for f in (exe, caps, launcher, *online):
         if not f.is_file():
             sys.exit(f'{f} not found: build with build.sh first')
-    folder = a.dist / NAME
+    folder = a.dist / a.name
     shutil.rmtree(folder, ignore_errors=True)
     if folder.exists():
         sys.exit(f'{folder} could not be removed (is it open?)')
@@ -224,17 +234,34 @@ def main():
     shutil.copy2(caps, folder / 'bin')
     version = a.version and f'{a.version}-windows' or (ROOT / 'out' / 'VERSION').read_text().strip()
     (folder / 'bin' / 'VERSION').write_text(version + '\n')
-    dlls = closure([exe, caps])
+    for f in online:
+        shutil.copy2(f, folder / 'bin')
+    dlls = closure([exe, caps, *online])
     for path in dlls.values():
         shutil.copy2(path, folder / 'bin')
     if dlss_files:
         for path in dlss_files:
             shutil.copy2(path, folder / 'bin')
         (folder / 'licenses').mkdir()
-        shutil.copy2(a.dlss_sdk / 'LICENSE.txt', folder / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt')
+        if a.dlss_from:
+            shutil.copy2(a.dlss_from.parent / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt',
+                         folder / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt')
+            if (a.dlss_from / 'dlss').is_dir():
+                shutil.copytree(a.dlss_from / 'dlss', folder / 'bin' / 'dlss', dirs_exist_ok=True)
+        else:
+            shutil.copy2(a.dlss_sdk / 'LICENSE.txt', folder / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt')
         write_text(folder / 'licenses' / 'dlss-bridge-LICENSE.txt',
                    (ROOT / 'dlss_bridge' / 'LICENSE.txt').read_text(encoding='utf-8'))
     shutil.copy2(launcher, folder)
+    # The launcher's artwork and display font (replaceable; assets/launcher/README.md).
+    shutil.copytree(ROOT / 'launcher' / 'windows' / 'assets', folder / 'assets', dirs_exist_ok=True)
+    (folder / 'licenses').mkdir(exist_ok=True)
+    shutil.copy2(ROOT / 'online' / 'LICENSE.CTRNativePorted', folder / 'licenses' / 'CTRNativePorted-LICENSE.txt')
+    shutil.copy2(ROOT / 'online' / 'dht' / 'LICENCE', folder / 'licenses' / 'jech-dht-LICENCE.txt')
+    shutil.copy2(ROOT / 'launcher' / 'windows' / 'assets' / 'launcher' / 'LuckiestGuy-LICENSE.txt',
+                 folder / 'licenses' / 'LuckiestGuy-LICENSE.txt')
+    shutil.copy2(ROOT / 'launcher' / 'windows' / 'assets' / 'launcher' / 'Lemonada-OFL.txt',
+                 folder / 'licenses' / 'Lemonada-OFL.txt')
     python = bundle_python(folder, a.dist / 'pycache')
     bundle_iced_x86(folder, a.dist / 'pycache')
     shutil.copy2(ROOT / 'run.py', folder)
@@ -263,19 +290,23 @@ def main():
     # The launcher sets up the game folder and starts it; the .bat is the way without it.
     # bbport.default.ini, not bbport.ini: unzipping a new version over an old one keeps the
     # player's settings (run.py and the launcher copy the defaults when bbport.ini is missing).
+    # This edition's launcher is Arabic and English: the English batch file, README-AR.txt and
+    # ONLINE.md (below) in place of the Spanish LEEME.txt.
     for source, target in (('bbport.default.ini', 'bbport.default.ini'),
-                           ('Jugar CTR Nitro-Fueled.bat', 'Jugar sin launcher.bat'),
-                           ('LEEME.txt', 'LEEME.txt')):
+                           ('Play without launcher.bat', 'Play without launcher.bat')):
         write_text(folder / target, (PORTABLE / source).read_text(encoding='utf-8'))
     write_text(folder / 'LICENSE', (ROOT / 'LICENSE').read_text(encoding='utf-8'))
     (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls, python, bool(dlss_files)).encode('utf-8'))
 
-    archive = a.dist / f'{NAME}-windows.zip'
+    for doc in ('ONLINE.md', 'README-AR.txt'):
+        if (PORTABLE / doc).is_file():
+            write_text(folder / doc, (PORTABLE / doc).read_text(encoding='utf-8'))
+    archive = a.dist / f'{a.name}-windows.zip'
     archive.unlink(missing_ok=True)
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for path in sorted(folder.rglob('*')):
             if path.is_file():  # forward slashes in the entry names, as the ZIP format asks
-                z.write(path, f'{NAME}/{path.relative_to(folder).as_posix()}')
+                z.write(path, f'{a.name}/{path.relative_to(folder).as_posix()}')
     digest = hashlib.sha256(archive.read_bytes()).hexdigest().upper()
     print(f'{archive}  {archive.stat().st_size / 1e6:.1f} MB  {len(dlls)} DLLs  {version}'
           f'{"  with DLSS" if dlss_files else ""}')

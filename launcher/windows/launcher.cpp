@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <windowsx.h>
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -39,7 +40,10 @@
 #include <vector>
 
 #include "gamepads.h"
+#include "online.h"
+#include "arabic.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
 
@@ -57,7 +61,7 @@ bool IsCtrTitle(const std::string& title) {
     return false;
 }
 constexpr const char* kUpdateVersion = "01.21";
-constexpr const char* kRepoUrl = "https://github.com/GetLostIn/CTR-NitroFueled-PC";
+constexpr const char* kRepoUrl = "https://github.com/LAMINX-BOT/CTR-NitroFueled-PC-Online";
 // The 1.21 update alone is about 8.5 GB; base game + update is much larger.
 constexpr std::uintmax_t kCompleteGameMinBytes = 10ull << 30;
 
@@ -116,10 +120,15 @@ std::string FormatBytes(std::uintmax_t bytes) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Language: Spanish or English, chosen in the launcher (default: Windows' language).
+// Language: Arabic or English, chosen in the launcher (default: Windows' language). Arabic is
+// shaped and laid out right to left by arabic.cpp; technical terms stay in English.
 
-bool g_spanish = true;
-const char* T(const char* es, const char* en) { return g_spanish ? es : en; }
+bool g_arabic = false;
+const char* T(const char* ar, const char* en) { return g_arabic ? ar : en; }
+
+/// "  ·  " between pieces of a line; in Arabic with RLM around it (arabic.cpp keeps "60 FPS" and
+/// "FSR 1" apart instead of reading them as one Latin run).
+const char* Sep() { return g_arabic ? "\u200F  ·  \u200F" : "  ·  "; }
 
 // ---------------------------------------------------------------------------------------------
 // key=value files, edited in place: comments, order and unknown keys are kept.
@@ -524,27 +533,27 @@ struct Choice {
 // English (1, US), Latin American Spanish (20), French (2) and Brazilian Portuguese (17). Other
 // codes (Spain's Spanish 3, German, Italian...) are not in this build and fall back to English.
 constexpr Choice kGameLanguages[] = {
-    {"Inglés", "English", "1"},
-    {"Español latinoamericano", "Spanish (Latin America)", "20"},
-    {"Francés", "French", "2"},
-    {"Portugués (Brasil)", "Portuguese (Brazil)", "17"},
+    {"الإنجليزية", "English", "1"},
+    {"الإسبانية (أمريكا اللاتينية)", "Spanish (Latin America)", "20"},
+    {"الفرنسية", "French", "2"},
+    {"البرتغالية (البرازيل)", "Portuguese (Brazil)", "17"},
 };
 // The European build (CUSA14876): the languages of the PAL release (its store page: English,
 // French, German, Italian, Spanish and Arabic), as PS4 codes. A language the files do not hold
 // falls back to English in the game.
 constexpr Choice kGameLanguagesEu[] = {
-    {"Inglés (Reino Unido)", "English (UK)", "18"},
-    {"Español (España)", "Spanish (Spain)", "3"},
-    {"Francés", "French", "2"},
-    {"Alemán", "German", "4"},
-    {"Italiano", "Italian", "5"},
-    {"Árabe", "Arabic", "21"},
+    {"الإنجليزية (بريطانيا)", "English (UK)", "18"},
+    {"الإسبانية (إسبانيا)", "Spanish (Spain)", "3"},
+    {"الفرنسية", "French", "2"},
+    {"الألمانية", "German", "4"},
+    {"الإيطالية", "Italian", "5"},
+    {"العربية", "Arabic", "21"},
 };
 constexpr Choice kPresentModes[] = {
-    {"Mailbox (recomendado)", "Mailbox (recommended)", "Mailbox"},
+    {"Mailbox (موصى به)", "Mailbox (recommended)", "Mailbox"},
     {"FIFO (VSync)", "FIFO (VSync)", "Fifo"},
-    {"FIFO relajado", "FIFO Relaxed", "FifoRelaxed"},
-    {"Inmediato (sin VSync)", "Immediate (no VSync)", "Immediate"},
+    {"FIFO Relaxed", "FIFO Relaxed", "FifoRelaxed"},
+    {"Immediate (بدون VSync)", "Immediate (no VSync)", "Immediate"},
 };
 constexpr int kFpsLimits[] = {0, 30, 60, 72, 90, 120, 144, 240};
 
@@ -640,6 +649,11 @@ struct App {
 
 App g_app;
 
+// Online (online.h; the Nitro look's code further down).
+bool OnlineOn();
+std::string PlayerName();
+std::string OnlineText(const std::string& english);
+
 /// The title ID of the chosen game (the merged folder, else the update or the base game): the
 /// saves, the shader cache, the languages and the merged folder's name follow it.
 std::string GameTitleId() {
@@ -662,15 +676,15 @@ void SaveLauncher() {
     a.launcher.Set("game_dir", PathText(a.game_dir));
     a.launcher.Set("base_dir", PathText(a.base_dir));
     a.launcher.Set("update_dir", PathText(a.update_dir));
-    a.launcher.Set("ui_language", g_spanish ? "es" : "en");
+    a.launcher.Set("ui_language", g_arabic ? "ar" : "en");
     if (!a.launcher.Save(LauncherIni(), "# CTR-NitroFueled-PC launcher")) {
-        a.notice = T("No se pudo guardar launcher.ini.", "Could not save launcher.ini.");
+        a.notice = T("تعذّر حفظ launcher.ini.", "Could not save launcher.ini.");
     }
 }
 
 void SaveGameIni() {
     if (!g_app.game.Save(GameIni(), "# bbport settings (in-game menu: Insert / L3+R3)")) {
-        g_app.notice = T("No se pudo guardar bbport.ini.", "Could not save bbport.ini.");
+        g_app.notice = T("تعذّر حفظ bbport.ini.", "Could not save bbport.ini.");
     }
 }
 
@@ -781,8 +795,8 @@ void StartMerge(std::vector<fs::path> sources) {
 }
 
 const char* DefaultGameLanguage() {
-    if (EuEdition()) return g_spanish ? "3" : "18";
-    return g_spanish ? "20" : "1";
+    if (EuEdition()) return g_arabic ? "21" : "18";  // the PAL release has Arabic
+    return "1";
 }
 
 /// The game language to start with: the saved one when the build has it, else the default (older
@@ -809,13 +823,21 @@ void SetEnv(const wchar_t* name, const std::string& value) {
 void StartGame() {
     App& a = g_app;
     if (!a.python || a.game_running) return;
+    // Multiplayer Online: this PC's service, verified, and its key for the game (runtime_online.c).
+    std::map<std::wstring, std::wstring> online_env;
+    if (OnlineOn()) {
+        std::string error;
+        if (!launcher_online::PrepareLaunch(a.root, PlayerName(), online_env, error)) {
+            a.notice = OnlineText(error);
+            return;
+        }
+    }
     SaveGameIni();
     SaveLauncher();
     // Friendly pre-check (run.py refuses the same way): no cold-cache ultrawide
     // launch that could only end in an error code.
     if (GameAspect() != "16:9" && !UltrawideCacheWarm()) {
-        a.notice = T("Primero juega una vez en 16:9 hasta el menú y ciérralo normal; "
-                     "entonces se desbloquea el ultra-panorámico.",
+        a.notice = T("العب مرة واحدة بدقة 16:9 حتى القائمة ثم أغلق اللعبة بشكل طبيعي؛ بعدها يُفتح UltraWide.",
                      "First play once in 16:9 up to the menu and close normally; "
                      "ultrawide unlocks then.");
         return;
@@ -832,7 +854,7 @@ void StartGame() {
     SetEnv(L"BB_DISPLAY", a.launcher.Get("display"));
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
     SetEnv(L"BB_GAMEPAD", a.launcher.Get("gamepad"));
-    SetEnv(L"BB_MENU_LANGUAGE", g_spanish ? "es" : "en");  // the in-game menu follows the launcher
+    SetEnv(L"BB_MENU_LANGUAGE", "en");  // the in-game menu (Insert) has Spanish and English only
     // The Controls tab's sticks settings (src/runtime_pad.c); the game gets the controllers alone.
     SetEnv(L"BB_PAD_DEADZONE", a.launcher.Get("pad_deadzone"));
     SetEnv(L"BB_PAD_DEADZONE_OUTER", a.launcher.Get("pad_deadzone_outer"));
@@ -842,6 +864,21 @@ void StartGame() {
     SetEnv(L"BB_DLC", a.launcher.Flag("dlc", true) ? "1" : "0");
     SetEnv(L"BB_DLC_DISABLED", a.launcher.Get("dlc_disabled"));
     SetEnv(L"BB_FULLSCREEN", "");  // bbport.ini's fullscreen= (the menu switch) decides
+    static bool named = false;  // BB_USER_NAME set by an online start of this launcher
+    for (const wchar_t* name : {L"CTR_ONLINE", L"CTR_ONLINE_SERVER", L"CTR_ONLINE_TRAFFIC_KEY", L"CTR_ONLINE_PORT_OFFSET",
+                                L"CTR_ONLINE_ACCOUNT", L"CTR_ONLINE_ID", L"CTR_WUMPA_MULTIPLIER", L"CTR_SYSTEM_LANGUAGE"})
+        SetEnvironmentVariableW(name, nullptr);
+    if (named) SetEnvironmentVariableW(L"BB_USER_NAME", nullptr);
+    named = false;
+    if (!online_env.empty()) {
+        for (const auto& [name, value] : online_env) SetEnvironmentVariableW(name.c_str(), value.c_str());
+        SetEnv(L"CTR_ONLINE_ID", PlayerName());
+        SetEnv(L"BB_USER_NAME", PlayerName());  // the PSN name the game shows (runtime_services.c)
+        named = true;
+        SetEnv(L"CTR_WUMPA_MULTIPLIER", a.launcher.Flag("wumpa_x100", false) ? "100" : "1");
+        SetEnv(L"CTR_SYSTEM_LANGUAGE", GameLanguage());  // the invitation and notice texts
+        AddLog("Online: as " + PlayerName() + " through this PC's online service");
+    }
     SetEnv(L"PYTHONUTF8", "1");
     SetEnv(L"PYTHONIOENCODING", "utf-8");
 
@@ -964,7 +1001,7 @@ void StartProbe() {
             ++number;
             std::string label = std::to_string(number) + ": " + line.substr(0, t1) + " (" +
                                 line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1) + ")";
-            if (t2 != std::string::npos && line.substr(t2 + 1) == "1") label += g_spanish ? " - principal" : " - primary";
+            if (t2 != std::string::npos && line.substr(t2 + 1) == "1") label += g_arabic ? " - الرئيسية" : " - primary";
             displays.emplace_back(std::to_string(number), label);
         }
         const Captured p = RunCaptured(tool.wstring(), Quote(tool.wstring()) + L" --gamepads", app.bin, 10000);
@@ -1165,7 +1202,7 @@ std::string ImportSaves(const fs::path& from) {
         };
         std::string dir = get("SAVEDATA_DIRECTORY");
         if (dir.empty() || dir.size() >= 32 || dir.find_first_of("\\/:") != std::string::npos) {
-            return T("param.sfo no dice en qué ranura va la partida (SAVEDATA_DIRECTORY).",
+            return T("ملف param.sfo لا يحدد خانة الحفظ (SAVEDATA_DIRECTORY).",
                      "param.sfo does not name the save slot (SAVEDATA_DIRECTORY).");
         }
         std::string error = BackupSaves("antes-de-importar");
@@ -1189,7 +1226,7 @@ std::string ImportSaves(const fs::path& from) {
         std::snprintf(p.detail, sizeof p.detail, "%s", get("DETAIL").c_str());
         p.mtime = int64_t(time(nullptr));
         if (!WriteTextAtomic(meta / L"param.bin", std::string(reinterpret_cast<const char*>(&p), sizeof p))) {
-            return T("No se pudo escribir param.bin.", "Could not write param.bin.");
+            return T("تعذّرت كتابة param.bin.", "Could not write param.bin.");
         }
         fs::copy_file(from / L"sce_sys" / L"icon0.png", meta / L"icon0.png", fs::copy_options::overwrite_existing, ec);
         return {};
@@ -1203,8 +1240,7 @@ std::string ImportSaves(const fs::path& from) {
         if (!IsMetaName(it->path().filename().wstring()) && fs::is_directory(meta, e2)) ours = true;
     }
     if (!ours) {
-        return T("No reconozco esa carpeta: elige una copia de seguridad, la carpeta CUSA13795 de las partidas de "
-                 "otro PC o una partida de PS4 descifrada (con sce_sys\\param.sfo).",
+        return T("هذا المجلد غير معروف: اختر نسخة احتياطية، أو مجلد حفظ CUSA13795 من جهاز آخر، أو حفظ PS4 مفكوك التشفير (فيه sce_sys\\param.sfo).",
                  "This folder is not recognized: choose a backup, the CUSA13795 saves folder from another PC or a "
                  "decrypted PS4 save (with sce_sys\\param.sfo).");
     }
@@ -1352,24 +1388,28 @@ void WritePatchConfig(const std::vector<std::string>& enabled, const std::vector
 // ---------------------------------------------------------------------------------------------
 // UI
 
-// v0.4 look: a dark theme with the Nitro orange as accent (ApplyTheme), Segoe UI for text,
-// Bahnschrift for titles and Segoe Fluent Icons / MDL2 Assets merged in for the icons below.
-const ImVec4 kGreen{0.42f, 0.86f, 0.52f, 1.0f};
-const ImVec4 kRed{1.0f, 0.42f, 0.40f, 1.0f};
-const ImVec4 kYellow{1.0f, 0.78f, 0.30f, 1.0f};
-const ImVec4 kGrey{0.58f, 0.61f, 0.70f, 1.0f};
-const ImVec4 kText{0.92f, 0.93f, 0.96f, 1.0f};
-const ImVec4 kAccent{1.0f, 0.54f, 0.12f, 1.0f};        // #FF8A1F
-const ImVec4 kAccentHover{1.0f, 0.63f, 0.26f, 1.0f};
-const ImVec4 kAccentActive{0.91f, 0.45f, 0.06f, 1.0f};
-const ImVec4 kBlue{0.30f, 0.64f, 1.0f, 1.0f};
-const ImVec4 kBg{0.067f, 0.075f, 0.102f, 1.0f};         // #11131A
-const ImVec4 kPanel{0.098f, 0.110f, 0.149f, 1.0f};      // #191C26
-const ImVec4 kCard{0.118f, 0.133f, 0.188f, 1.0f};       // #1E2230
-const ImVec4 kFrame{0.149f, 0.169f, 0.231f, 1.0f};      // #262B3B
-const ImVec4 kFrameHover{0.184f, 0.208f, 0.314f, 1.0f};
-const ImVec4 kFrameActive{0.220f, 0.251f, 0.388f, 1.0f};
-const ImVec4 kBorder{0.173f, 0.192f, 0.259f, 1.0f};
+// Nitro look (after CTRNativePorted's "Nitro Cinema" launcher): deep navy, cards, the CTR
+// yellow, cyan and pink, Luckiest Guy (assets\launcher) for titles and tabs, Segoe UI for text
+// and Segoe Fluent Icons / MDL2 Assets merged in for the icons below.
+const ImVec4 kGreen{0.55f, 0.89f, 0.23f, 1.0f};         // #8CE33A
+const ImVec4 kRed{1.0f, 0.33f, 0.45f, 1.0f};
+const ImVec4 kYellow{1.0f, 0.80f, 0.18f, 1.0f};         // #FFCC2E
+const ImVec4 kGrey{0.66f, 0.70f, 0.83f, 1.0f};          // #A8B3D4
+const ImVec4 kText{1.0f, 1.0f, 1.0f, 1.0f};
+const ImVec4 kAccent{1.0f, 0.80f, 0.18f, 1.0f};         // the CTR yellow
+const ImVec4 kAccentHover{1.0f, 0.86f, 0.36f, 1.0f};
+const ImVec4 kAccentActive{0.93f, 0.70f, 0.08f, 1.0f};
+const ImVec4 kBlue{0.18f, 0.83f, 1.0f, 1.0f};           // #2ED4FF cyan
+const ImVec4 kPink{1.0f, 0.24f, 0.57f, 1.0f};           // #FF3D91
+const ImVec4 kOrange{1.0f, 0.55f, 0.12f, 1.0f};
+const ImVec4 kBg{0.051f, 0.063f, 0.165f, 1.0f};         // #0D102A
+const ImVec4 kPanel{0.071f, 0.086f, 0.204f, 1.0f};      // #121634
+const ImVec4 kCard{0.106f, 0.141f, 0.278f, 1.0f};       // #1B2447
+const ImVec4 kFrame{0.047f, 0.059f, 0.161f, 1.0f};      // #0C0F29 (fields)
+const ImVec4 kFrameHover{0.122f, 0.165f, 0.310f, 1.0f};
+const ImVec4 kFrameActive{0.157f, 0.208f, 0.380f, 1.0f};
+const ImVec4 kButton{0.122f, 0.161f, 0.302f, 1.0f};     // #1F294D
+const ImVec4 kBorder{0.200f, 0.247f, 0.420f, 1.0f};     // #333F6B
 
 // Segoe Fluent Icons / Segoe MDL2 Assets code points, as UTF-8.
 #define ICON_PLAY "\xEE\x9D\xA8"      // E768
@@ -1397,30 +1437,40 @@ const ImVec4 kBorder{0.173f, 0.192f, 0.259f, 1.0f};
 #define ICON_DOWNLOAD "\xEE\xA2\x96"  // E896
 #define ICON_STAR "\xEE\x9C\xB4"      // E734
 
-ImFont* g_font_heading = nullptr;  // Segoe UI Semibold (section titles)
-ImFont* g_font_title = nullptr;    // Bahnschrift (the header, the Play button)
+ImFont* g_font_heading = nullptr;  // Segoe UI Semibold (labels)
+ImFont* g_font_title = nullptr;    // Bahnschrift (fallback for the display font)
+ImFont* g_font_display = nullptr;  // Luckiest Guy (assets\launcher): titles, tabs, the Play button
+ImFont* g_font_italic = nullptr;   // Segoe UI Semibold Italic (the Home status line, the footer)
 float g_ui_scale = 1.0f;
 ID3D11ShaderResourceView* g_logo = nullptr;  // the app icon (LoadLogo)
 const char* g_goto_tab = nullptr;             // a tab to bring to front on the next frame
 void PlaySummary();
 std::string EditionLabel();
+ImFont* DisplayFont() { return g_font_display ? g_font_display : g_font_title ? g_font_title : ImGui::GetFont(); }
 
-/// A section title: the semibold font in the accent colour over a separator line.
+// Card titles cycle through the CTR colours, as on the Nitro Cinema pages.
+const ImVec4* g_section_color = nullptr;
+int g_section_index = 0;
+
+/// A section title: the display font in a CTR colour, as the cards' titles of the Nitro look.
 void Section(const char* label) {
-    ImGui::Spacing();
-    if (g_font_heading) ImGui::PushFont(g_font_heading, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-    ImGui::SeparatorText(label);
+    static const ImVec4* const kCycle[] = {&kBlue, &kYellow, &kPink, &kGreen};
+    const ImVec4& color = g_section_color ? *g_section_color : *kCycle[g_section_index++ % 4];
+    if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 2.0f) ImGui::Dummy(ImVec2(0, 6.0f * g_ui_scale));
+    ImGui::PushFont(DisplayFont(), ImGui::GetStyle().FontSizeBase * 1.18f);
+    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    ImGui::TextUnformatted(label);
     ImGui::PopStyleColor();
-    if (g_font_heading) ImGui::PopFont();
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 2.0f * g_ui_scale));
 }
 
 /// A rounded panel that grows with its content.
 void BeginCard(const char* id) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, kCard);
-    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f * g_ui_scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * g_ui_scale, 12.0f * g_ui_scale));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.16f, 0.20f, 0.36f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f * g_ui_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.0f * g_ui_scale, 16.0f * g_ui_scale));
     ImGui::BeginChild(id, ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
 }
@@ -1430,91 +1480,143 @@ void EndCard() {
     ImGui::PopStyleColor(2);
 }
 
+// In the Settings cards (narrow columns) a combo's label goes above it, full width, as on
+// the Nitro Cinema pages; elsewhere combos keep ImGui's label on the right.
+bool g_label_above = false;
+std::string VisibleLabel(const char* label) {
+    const char* end = std::strstr(label, "##");
+    return end ? std::string(label, end) : std::string(label);
+}
+bool NitroBeginCombo(const char* label, const char* preview, ImGuiComboFlags flags = 0) {
+    if (!g_label_above) return ImGui::BeginCombo(label, preview, flags);
+    const std::string shown = VisibleLabel(label);
+    if (!shown.empty()) ImGui::TextColored(kGrey, "%s", shown.c_str());
+    ImGui::SetNextItemWidth(-28.0f * g_ui_scale);  // room for a help marker on the same line
+    return ImGui::BeginCombo((std::string("##") + label).c_str(), preview, flags);
+}
+bool NitroSlider(const char* label, float* v, float lo, float hi, const char* format) {
+    if (!g_label_above) return ImGui::SliderFloat(label, v, lo, hi, format);
+    ImGui::TextColored(kGrey, "%s", VisibleLabel(label).c_str());
+    ImGui::SetNextItemWidth(-28.0f * g_ui_scale);
+    return ImGui::SliderFloat((std::string("##") + label).c_str(), v, lo, hi, format);
+}
+
+/// The Nitro look's switch (cyan when on) in place of a check box; same contract as ImGui::Checkbox.
+bool ToggleSwitch(const char* label, bool* v) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+    const float s = g_ui_scale, h = 22.0f * s, w = 40.0f * s;
+    const ImGuiID id = window->GetID(label);
+    const char* end = ImGui::FindRenderedTextEnd(label);
+    const ImVec2 text = ImGui::CalcTextSize(label, end);
+    const ImVec2 pos = window->DC.CursorPos;
+    const float line = std::max(h, ImGui::GetFrameHeight());
+    const float gap = ImGui::GetStyle().ItemInnerSpacing.x * 1.6f;
+    const ImRect bb(pos, ImVec2(pos.x + w + (text.x > 0 ? gap + text.x : 0), pos.y + line));
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, id)) return false;
+    bool hovered = false, held = false;
+    const bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    if (pressed) {
+        *v = !*v;
+        ImGui::MarkItemEdited(id);
+    }
+    ImDrawList* dl = window->DrawList;
+    const ImVec2 a(pos.x, pos.y + (line - h) * 0.5f), b(a.x + w, a.y + h);
+    const ImVec4 track = *v ? kBlue : ImVec4(0.24f, 0.29f, 0.45f, 1.0f);
+    dl->AddRectFilled(a, b, ImGui::GetColorU32(ImVec4(track.x, track.y, track.z, hovered ? 0.88f : 1.0f)), h * 0.5f);
+    const float r = h * 0.5f - 3.0f * s;
+    dl->AddCircleFilled(ImVec2(a.x + h * 0.5f + (*v ? w - h : 0.0f), a.y + h * 0.5f), r, ImGui::GetColorU32(ImVec4(1, 1, 1, 1)));
+    if (text.x > 0) ImGui::RenderText(ImVec2(b.x + gap, pos.y + (line - text.y) * 0.5f), label, end);
+    return pressed;
+}
+
 void ApplyTheme(float scale) {
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowPadding = ImVec2(18 * scale, 14 * scale);
-    st.FramePadding = ImVec2(10 * scale, 6 * scale);
-    st.ItemSpacing = ImVec2(10 * scale, 8 * scale);
+    st.FramePadding = ImVec2(12 * scale, 7 * scale);
+    st.ItemSpacing = ImVec2(10 * scale, 9 * scale);
     st.ItemInnerSpacing = ImVec2(8 * scale, 6 * scale);
     st.CellPadding = ImVec2(8 * scale, 5 * scale);
-    st.ScrollbarSize = 12 * scale;
-    st.GrabMinSize = 12 * scale;
+    st.ScrollbarSize = 10 * scale;
+    st.GrabMinSize = 14 * scale;
     st.WindowRounding = 0;
-    st.ChildRounding = 8 * scale;
-    st.FrameRounding = 6 * scale;
-    st.PopupRounding = 8 * scale;
+    st.ChildRounding = 14 * scale;
+    st.FrameRounding = 8 * scale;
+    st.PopupRounding = 10 * scale;
     st.ScrollbarRounding = 8 * scale;
-    st.GrabRounding = 6 * scale;
-    st.TabRounding = 6 * scale;
+    st.GrabRounding = 8 * scale;
+    st.TabRounding = 8 * scale;
     st.WindowBorderSize = 0;
     st.ChildBorderSize = 1;
     st.PopupBorderSize = 1;
-    st.FrameBorderSize = 0;
+    st.FrameBorderSize = 1;
     st.TabBorderSize = 0;
-    st.TabBarBorderSize = 1;
-    st.TabBarOverlineSize = 2 * scale;
-    st.SeparatorTextBorderSize = 2 * scale;
+    st.TabBarBorderSize = 0;
+    st.TabBarOverlineSize = 0;
+    st.SeparatorTextBorderSize = 1 * scale;
     st.SeparatorTextPadding = ImVec2(14 * scale, 4 * scale);
+    st.DisabledAlpha = 0.45f;
     ImVec4* c = st.Colors;
     c[ImGuiCol_Text] = kText;
-    c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.56f, 1.0f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.55f, 0.70f, 1.0f);
     c[ImGuiCol_WindowBg] = kBg;
     c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_PopupBg] = kPanel;
+    c[ImGuiCol_PopupBg] = ImVec4(0.086f, 0.110f, 0.235f, 0.98f);
     c[ImGuiCol_Border] = kBorder;
     c[ImGuiCol_FrameBg] = kFrame;
-    c[ImGuiCol_FrameBgHovered] = kFrameHover;
-    c[ImGuiCol_FrameBgActive] = kFrameActive;
+    c[ImGuiCol_FrameBgHovered] = ImVec4(0.075f, 0.094f, 0.220f, 1.0f);
+    c[ImGuiCol_FrameBgActive] = ImVec4(0.094f, 0.118f, 0.259f, 1.0f);
     c[ImGuiCol_TitleBg] = kPanel;
     c[ImGuiCol_TitleBgActive] = kPanel;
     c[ImGuiCol_MenuBarBg] = kPanel;
     c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = kFrameHover;
-    c[ImGuiCol_ScrollbarGrabHovered] = kFrameActive;
-    c[ImGuiCol_ScrollbarGrabActive] = kAccentActive;
-    c[ImGuiCol_CheckMark] = kAccent;
-    c[ImGuiCol_SliderGrab] = kAccent;
-    c[ImGuiCol_SliderGrabActive] = kAccentHover;
-    c[ImGuiCol_Button] = kFrame;
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.24f, 0.29f, 0.45f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabHovered] = kBlue;
+    c[ImGuiCol_ScrollbarGrabActive] = kYellow;
+    c[ImGuiCol_CheckMark] = kBlue;
+    c[ImGuiCol_SliderGrab] = kBlue;
+    c[ImGuiCol_SliderGrabActive] = kYellow;
+    c[ImGuiCol_Button] = kButton;
     c[ImGuiCol_ButtonHovered] = kFrameHover;
     c[ImGuiCol_ButtonActive] = kFrameActive;
-    c[ImGuiCol_Header] = ImVec4(1.0f, 0.54f, 0.12f, 0.20f);
-    c[ImGuiCol_HeaderHovered] = ImVec4(1.0f, 0.54f, 0.12f, 0.30f);
-    c[ImGuiCol_HeaderActive] = ImVec4(1.0f, 0.54f, 0.12f, 0.42f);
+    c[ImGuiCol_Header] = ImVec4(0.18f, 0.24f, 0.46f, 1.0f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(0.22f, 0.30f, 0.56f, 1.0f);
+    c[ImGuiCol_HeaderActive] = ImVec4(0.26f, 0.35f, 0.64f, 1.0f);
     c[ImGuiCol_Separator] = kBorder;
-    c[ImGuiCol_SeparatorHovered] = kAccentHover;
-    c[ImGuiCol_SeparatorActive] = kAccent;
+    c[ImGuiCol_SeparatorHovered] = kBlue;
+    c[ImGuiCol_SeparatorActive] = kYellow;
     c[ImGuiCol_ResizeGrip] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_Tab] = kPanel;
+    c[ImGuiCol_Tab] = kButton;
     c[ImGuiCol_TabHovered] = kFrameHover;
-    c[ImGuiCol_TabSelected] = kCard;
-    c[ImGuiCol_TabSelectedOverline] = kAccent;
-    c[ImGuiCol_TabDimmed] = kPanel;
-    c[ImGuiCol_TabDimmedSelected] = kCard;
-    c[ImGuiCol_TabDimmedSelectedOverline] = kAccent;
-    c[ImGuiCol_PlotHistogram] = kAccent;
-    c[ImGuiCol_PlotHistogramHovered] = kAccentHover;
-    c[ImGuiCol_TableHeaderBg] = kFrame;
+    c[ImGuiCol_TabSelected] = ImVec4(0.18f, 0.23f, 0.42f, 1.0f);
+    c[ImGuiCol_TabSelectedOverline] = kYellow;
+    c[ImGuiCol_TabDimmed] = kButton;
+    c[ImGuiCol_TabDimmedSelected] = ImVec4(0.18f, 0.23f, 0.42f, 1.0f);
+    c[ImGuiCol_TabDimmedSelectedOverline] = kYellow;
+    c[ImGuiCol_PlotHistogram] = kBlue;
+    c[ImGuiCol_PlotHistogramHovered] = kYellow;
+    c[ImGuiCol_TableHeaderBg] = kButton;
     c[ImGuiCol_TableBorderStrong] = kBorder;
-    c[ImGuiCol_TableBorderLight] = ImVec4(0.15f, 0.17f, 0.23f, 1.0f);
+    c[ImGuiCol_TableBorderLight] = ImVec4(0.15f, 0.19f, 0.33f, 1.0f);
     c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.025f);
     c[ImGuiCol_TextLink] = kBlue;
-    c[ImGuiCol_TextSelectedBg] = ImVec4(1.0f, 0.54f, 0.12f, 0.35f);
-    c[ImGuiCol_NavCursor] = kAccent;
-    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.55f);
+    c[ImGuiCol_TextSelectedBg] = ImVec4(0.18f, 0.83f, 1.0f, 0.35f);
+    c[ImGuiCol_NavCursor] = kYellow;
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.02f, 0.03f, 0.10f, 0.70f);
 }
 
 std::string Describe(const FolderInfo& f) {
     switch (f.kind) {
-    case Kind::Empty: return T("sin elegir", "not chosen");
-    case Kind::Missing: return T("la carpeta no existe", "the folder does not exist");
+    case Kind::Empty: return T("لم يتم الاختيار", "not chosen");
+    case Kind::Missing: return T("المجلد غير موجود", "the folder does not exist");
     case Kind::NotGame:
-        return T("no tiene eboot.bin y sce_sys\\param.sfo (ni Image0 y Sc0)", "no eboot.bin and sce_sys\\param.sfo (nor Image0 and Sc0)");
-    case Kind::OtherTitle: return std::string(T("es otro juego o región: ", "another game or region: ")) + f.title;
-    case Kind::OtherVersion: return std::string(T("actualización ", "update ")) + f.version + T(" (se necesita la 01.21)", " (01.21 is needed)");
-    case Kind::Base: return std::string(T("juego base ", "base game ")) + f.title + " v" + f.version;
-    case Kind::Update: return std::string(T("actualización ", "update ")) + f.version + " (" + FormatBytes(f.bytes) + ")";
+        return T("لا يوجد eboot.bin و sce_sys\\param.sfo (ولا Image0 و Sc0)", "no eboot.bin and sce_sys\\param.sfo (nor Image0 and Sc0)");
+    case Kind::OtherTitle: return std::string(T("لعبة أو منطقة أخرى: ", "another game or region: ")) + f.title;
+    case Kind::OtherVersion: return std::string(T("تحديث ", "update ")) + f.version + T(" (المطلوب 01.21)", " (01.21 is needed)");
+    case Kind::Base: return std::string(T("اللعبة الأساسية ", "base game ")) + f.title + " v" + f.version;
+    case Kind::Update: return std::string(T("تحديث ", "update ")) + f.version + " (" + FormatBytes(f.bytes) + ")";
     case Kind::Complete: return std::string(f.title) + " v" + f.version + " (" + FormatBytes(f.bytes) + ")";
     }
     return {};
@@ -1533,7 +1635,7 @@ void HelpMarker(const char* text) {
 
 void GameFlag(const char* key, const char* label, bool fallback, const char* help = nullptr) {
     bool v = g_app.game.Flag(key, fallback);
-    if (ImGui::Checkbox(label, &v)) {
+    if (ToggleSwitch(label, &v)) {
         g_app.game.Set(key, v ? "1" : "0");
         SaveGameIni();
     }
@@ -1542,7 +1644,7 @@ void GameFlag(const char* key, const char* label, bool fallback, const char* hel
 
 void LauncherFlag(const char* key, const char* label, bool fallback, const char* help = nullptr) {
     bool v = g_app.launcher.Flag(key, fallback);
-    if (ImGui::Checkbox(label, &v)) {
+    if (ToggleSwitch(label, &v)) {
         g_app.launcher.Set(key, v ? "1" : "0");
         SaveLauncher();
     }
@@ -1555,7 +1657,7 @@ void ChoiceCombo(const char* label, const char* key, const Choice (&choices)[N],
     const Choice* selected = &choices[0];
     for (const auto& c : choices)
         if (current == c.value) selected = &c;
-    if (ImGui::BeginCombo(label, T(selected->es, selected->en))) {
+    if (NitroBeginCombo(label, T(selected->es, selected->en))) {
         for (const auto& c : choices) {
             if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
                 g_app.launcher.Set(key, c.value);
@@ -1566,17 +1668,17 @@ void ChoiceCombo(const char* label, const char* key, const Choice (&choices)[N],
     }
 }
 
-void PlayTab() {
+/// The game folders: setup (choose, merge with hard links) or the ready game (Advanced page).
+void GameSetupCard() {
     App& a = g_app;
     const bool busy = a.job != Job::None;
     BeginCard("game");
     if (g_font_heading) ImGui::PushFont(g_font_heading, ImGui::GetStyle().FontSizeBase * 1.15f);
-    ImGui::TextUnformatted((std::string(ICON_FOLDER "  ") + T("Tu juego", "Your game")).c_str());
+    ImGui::TextUnformatted((std::string(ICON_FOLDER "  ") + T("لعبتك", "Your game")).c_str());
     if (g_font_heading) ImGui::PopFont();
 
-    const bool ready = a.game_info.kind == Kind::Complete && a.game_checked && a.game_ok;
     if (!a.python) {
-        ImGui::TextColored(kRed, "%s", T("Falta Python 3: no se encontró python\\python.exe ni Python instalado.",
+        ImGui::TextColored(kRed, "%s", T("Python 3 غير موجود: لا يوجد python\\python.exe ولا Python مثبّت.",
                                          "Python 3 is missing: no python\\python.exe and no installed Python."));
     }
     if (a.game_info.kind == Kind::Complete) {
@@ -1584,57 +1686,55 @@ void PlayTab() {
             const size_t total = a.merge_total, done = a.merge_done;
             char overlay[64];
             std::snprintf(overlay, sizeof overlay, "%zu / %zu", done, total);
-            ImGui::TextColored(kYellow, "%s", T("Preparando el juego...", "Preparing the game..."));
+            ImGui::TextColored(kYellow, "%s", T("جارٍ تجهيز اللعبة...", "Preparing the game..."));
             ImGui::ProgressBar(total ? float(done) / float(total) : 0.0f, ImVec2(-FLT_MIN, 0), overlay);
         } else if (a.game_info.split) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(kYellow, "%s",
-                               T("Esta carpeta tiene el formato de PS4 PKG Tool (Image0 y Sc0). Hay que prepararla: "
-                                 "se crea una carpeta nueva con enlaces duros, sin tocar la tuya.",
+                               T("هذا المجلد بتنسيق PS4 PKG Tool (Image0 و Sc0) ويحتاج تجهيزاً: يُنشأ مجلد جديد بروابط صلبة (hard links) دون تغيير مجلدك.",
                                  "This folder has the PS4 PKG Tool layout (Image0 and Sc0). It needs preparing: a "
                                  "new folder of hard links is created, yours is not changed."));
             ImGui::PopTextWrapPos();
             ImGui::BeginDisabled(busy);
-            if (ImGui::Button(T("Preparar el juego", "Prepare the game"))) StartMerge({a.game_dir});
+            if (ImGui::Button(T("تجهيز اللعبة", "Prepare the game"))) StartMerge({a.game_dir});
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::TextColored(kGrey, "%s %s", T("se crea", "creates"), PathText(MergeTarget(a.game_dir)).c_str());
+            ImGui::TextColored(kGrey, "%s %s", T("سيُنشئ", "creates"), PathText(MergeTarget(a.game_dir)).c_str());
         } else if (!a.game_checked) {
-            ImGui::TextColored(kYellow, "%s", T("Comprobando el juego...", "Checking the game..."));
+            ImGui::TextColored(kYellow, "%s", T("جارٍ فحص اللعبة...", "Checking the game..."));
         } else if (a.game_ok) {
-            ImGui::TextColored(kGreen, "%s  %s %s", ICON_CHECK, T("Listo:", "Ready:"), Describe(a.game_info).c_str());
+            ImGui::TextColored(kGreen, "%s  %s %s", ICON_CHECK, T("جاهزة:", "Ready:"), Describe(a.game_info).c_str());
             const std::string edition = EditionLabel();
             if (!edition.empty()) {
                 ImGui::SameLine();
                 ImGui::TextColored(kBlue, "·  %s", edition.c_str());
             }
         } else {
-            ImGui::TextColored(kRed, "%s", T("Estos archivos no sirven:", "These files do not work:"));
+            ImGui::TextColored(kRed, "%s", T("هذه الملفات لا تعمل:", "These files do not work:"));
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextUnformatted(a.check_message.c_str());
             ImGui::PopTextWrapPos();
         }
         ImGui::TextColored(kGrey, "%s", PathText(a.game_dir).c_str());
-        if (ImGui::Button((std::string(ICON_FOLDER "  ") + T("Cambiar carpeta del juego...", "Change game folder...")).c_str()) &&
+        if (ImGui::Button((std::string(ICON_FOLDER "  ") + T("تغيير مجلد اللعبة...", "Change game folder...")).c_str()) &&
             !busy && !a.game_running) {
             ChooseFolder(a.game_dir, a.game_info, L"CUSA13795 + 1.21");
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Abrir carpeta", "Open folder"))) OpenInShell(a.game_dir);
+        if (ImGui::Button(T("فتح المجلد", "Open folder"))) OpenInShell(a.game_dir);
     } else {
         if (a.game_info.kind == Kind::Update) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
-                               T("solo tiene la actualización 1.21, falta el juego base",
+                               T("يحتوي على تحديث 1.21 فقط، اللعبة الأساسية مفقودة",
                                  "only has the 1.21 update, the base game is missing"));
         } else if (a.game_info.kind == Kind::Base) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
-                               T("es el juego base sin la actualización 1.21", "is the base game without the 1.21 update"));
+                               T("هي اللعبة الأساسية بدون تحديث 1.21", "is the base game without the 1.21 update"));
         } else if (a.game_info.kind != Kind::Empty) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(), Describe(a.game_info).c_str());
         }
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(T("Necesitas tu propio dump de PS4: el juego base (CUSA13795) y la actualización 1.21 "
-                                 "(CUSA13795-patch; o la edición europea CUSA14876 con su 1.21). Si ya los tienes juntos en una carpeta, elige esa.",
+        ImGui::TextUnformatted(T("تحتاج نسختك الخاصة من PS4 (dump): اللعبة الأساسية (CUSA13795) وتحديث 1.21 (CUSA13795-patch؛ أو النسخة الأوروبية CUSA14876 مع تحديثها 1.21). إن كانا مدموجين في مجلد واحد فاختره.",
                                  "You need your own PS4 dump: the base game (CUSA13795) and the 1.21 update "
                                  "(CUSA13795-patch; or the European edition CUSA14876 with its 1.21). If they are already merged in one folder, "
                                  "choose that one."));
@@ -1654,11 +1754,11 @@ void PlayTab() {
                 if (!slot.empty()) ImGui::TextColored(kGrey, "%s", PathText(slot).c_str());
                 ImGui::TableNextColumn();
                 ImGui::PushID(id);
-                if (ImGui::Button(T("Elegir...", "Choose...")) && !busy) ChooseFolder(slot, info, title);
+                if (ImGui::Button(T("اختيار...", "Choose...")) && !busy) ChooseFolder(slot, info, title);
                 ImGui::PopID();
             };
-            row(T("Juego base", "Base game"), a.base_dir, a.base_info, Kind::Base, L"CUSA13795", "base");
-            row(T("Actualización 1.21", "Update 1.21"), a.update_dir, a.update_info, Kind::Update, L"CUSA13795-patch", "update");
+            row(T("اللعبة الأساسية", "Base game"), a.base_dir, a.base_info, Kind::Base, L"CUSA13795", "base");
+            row(T("تحديث 1.21", "Update 1.21"), a.update_dir, a.update_info, Kind::Update, L"CUSA13795-patch", "update");
             ImGui::EndTable();
         }
         const bool can_merge = a.base_info.kind == Kind::Base && a.update_info.kind == Kind::Update;
@@ -1670,96 +1770,44 @@ void PlayTab() {
             ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 0), overlay);
         } else {
             ImGui::BeginDisabled(!can_merge || busy);
-            if (ImGui::Button(T("Preparar el juego (base + 1.21)", "Prepare the game (base + 1.21)"))) {
+            if (ImGui::Button(T("تجهيز اللعبة (الأساسية + 1.21)", "Prepare the game (base + 1.21)"))) {
                 StartMerge({a.base_dir, a.update_dir});
             }
             ImGui::EndDisabled();
             if (can_merge) {
                 ImGui::SameLine();
-                ImGui::TextColored(kGrey, "%s %s", T("se crea", "creates"),
+                ImGui::TextColored(kGrey, "%s %s", T("سيُنشئ", "creates"),
                                    PathText(MergeTarget(a.base_dir)).c_str());
             }
-            HelpMarker(T("Une la actualización con el juego base en una carpeta nueva usando enlaces duros: no ocupa "
-                         "espacio extra ni cambia tus carpetas originales (si están en discos distintos, se copia).",
+            HelpMarker(T("يدمج التحديث فوق اللعبة الأساسية في مجلد جديد بروابط صلبة (hard links): لا يستهلك مساحة إضافية ولا يغيّر مجلداتك الأصلية (يتم النسخ إن كانا على قرصين مختلفين).",
                          "Merges the update over the base game into a new folder with hard links: no extra disk "
                          "space and your original folders are not changed (copied if they are on different drives)."));
         }
         ImGui::Spacing();
-        if (ImGui::Button(T("Ya tengo el juego preparado...", "I already have the merged game...")) && !busy) {
+        if (ImGui::Button(T("لديّ اللعبة مدموجة مسبقاً...", "I already have the merged game...")) && !busy) {
             ChooseFolder(a.game_dir, a.game_info, L"CUSA13795-1.21");
         }
     }
 
     EndCard();
+}
 
-    if (ready && !a.game_running) {
-        ImGui::Spacing();
-        BeginCard("summary");
-        if (g_font_heading) ImGui::PushFont(g_font_heading, ImGui::GetStyle().FontSizeBase * 1.15f);
-        ImGui::TextUnformatted((std::string(ICON_DISPLAY "  ") + T("Así arrancará", "It will start with")).c_str());
-        if (g_font_heading) ImGui::PopFont();
-        PlaySummary();
-        EndCard();
-    }
-
-    ImGui::Spacing();
-    const float play_height = ImGui::GetFontSize() * 3.2f;
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f * g_ui_scale);
-    ImGui::PushFont(g_font_title, ImGui::GetStyle().FontSizeBase * 1.7f);
-    if (a.game_running) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.20f, 0.18f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.74f, 0.26f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.52f, 0.16f, 0.14f, 1.0f));
-        if (ImGui::Button((std::string(ICON_STOP "  ") + T("CERRAR EL JUEGO", "STOP THE GAME")).c_str(),
-                          ImVec2(-FLT_MIN, play_height)))
-            StopGame();
-        ImGui::PopStyleColor(3);
-    } else {
-        ImGui::BeginDisabled(!ready || busy || !a.python);
-        ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccentHover);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentActive);
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.06f, 0.04f, 1.0f));
-        if (ImGui::Button((std::string(ICON_PLAY "  ") + T("JUGAR", "PLAY")).c_str(), ImVec2(-FLT_MIN, play_height)))
-            StartGame();
-        ImGui::PopStyleColor(4);
-        ImGui::EndDisabled();
-    }
-    ImGui::PopFont();
-    ImGui::PopStyleVar();
-
-    std::string status;
+/// run.py's output (Advanced page; open by default while the game runs or after it ended).
+void LogPanel() {
+    App& a = g_app;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kPanel);
+    ImGui::BeginChild("log", ImVec2(0, std::max(ImGui::GetContentRegionAvail().y, ImGui::GetFontSize() * 12.0f)),
+                      ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+    ImGui::PopStyleColor();
     {
         std::scoped_lock lock{a.mutex};
-        status = a.last_status;
+        ImGuiListClipper clipper;
+        clipper.Begin(int(a.log.size()));
+        while (clipper.Step())
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) ImGui::TextUnformatted(a.log[size_t(i)].c_str());
     }
-    if (a.game_running) {
-        ImGui::TextColored(kYellow, "%s", T("El juego está abierto. El primer arranque compila shaders y tarda un poco.",
-                                            "The game is running. The first start compiles shaders and takes a while."));
-    } else if (a.show_exit) {
-        if (a.exit_code == 0 || a.stopped) ImGui::TextColored(kGrey, "%s", T("El juego se cerró.", "The game was closed."));
-        else ImGui::TextColored(kRed, T("El juego se cerró con un error (código %lu). Mira el registro abajo o en last_run.log.",
-                                        "The game ended with an error (code %lu). See the log below or last_run.log."),
-                                (unsigned long)a.exit_code);
-    }
-    if (!status.empty()) ImGui::TextColored(kGrey, "%s", status.c_str());
-
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader(T("Registro", "Log"), a.game_running || a.show_exit ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, kPanel);
-        ImGui::BeginChild("log", ImVec2(0, std::max(ImGui::GetContentRegionAvail().y, ImGui::GetFontSize() * 12.0f)),
-                          ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::PopStyleColor();
-        {
-            std::scoped_lock lock{a.mutex};
-            ImGuiListClipper clipper;
-            clipper.Begin(int(a.log.size()));
-            while (clipper.Step())
-                for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) ImGui::TextUnformatted(a.log[size_t(i)].c_str());
-        }
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
-        ImGui::EndChild();
-    }
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f) ImGui::SetScrollHereY(1.0f);
+    ImGui::EndChild();
 }
 
 // bbport.ini render_res: the scene size (scripts/patches.py, run.py; docs/sacredfire/13-resolution.md).
@@ -1769,10 +1817,10 @@ struct RenderRes {
     const char* en;
 };
 constexpr RenderRes kRenderRes[] = {
-    {"480", "480p (854 x 480, PCs muy modestos)", "480p (854 x 480, very low-end PCs)"},
-    {"720", "720p (1280 x 720, PCs modestos)", "720p (1280 x 720, low-end PCs)"},
+    {"480", "480p (854 x 480، للأجهزة الضعيفة جداً)", "480p (854 x 480, very low-end PCs)"},
+    {"720", "720p (1280 x 720، للأجهزة الضعيفة)", "720p (1280 x 720, low-end PCs)"},
     {"1080", "1080p (1920 x 1080)", "1080p (1920 x 1080)"},
-    {"1440", "1440p (2560 x 1440, PS4 Pro)", "1440p (2560 x 1440, PS4 Pro)"},
+    {"1440", "1440p (2560 x 1440، PS4 Pro)", "1440p (2560 x 1440, PS4 Pro)"},
     {"1620", "1620p (2880 x 1620)", "1620p (2880 x 1620)"},
     {"2160", "4K (3840 x 2160)", "4K (3840 x 2160)"},
 };
@@ -1844,7 +1892,7 @@ bool GameChoiceCombo(const char* label, const char* key, const Choice (&choices)
         if (current == c.value) selected = &c;
     bool changed = false;
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * width_em);
-    if (ImGui::BeginCombo(label, T(selected->es, selected->en))) {
+    if (NitroBeginCombo(label, T(selected->es, selected->en))) {
         for (const auto& c : choices) {
             if (ImGui::Selectable(T(c.es, c.en), &c == selected) && &c != selected) {
                 a.game.Set(key, c.value);
@@ -1863,7 +1911,7 @@ void RenderResCombo() {
     for (const auto& r : kRenderRes)
         if (current == r.value) selected = &r;
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
-    if (ImGui::BeginCombo(T("Resolución interna", "Internal resolution"), T(selected->es, selected->en))) {
+    if (NitroBeginCombo(T("الدقة الداخلية", "Internal resolution"), T(selected->es, selected->en))) {
         for (const auto& r : kRenderRes) {
             if (ImGui::Selectable(T(r.es, r.en), &r == selected)) {
                 a.game.Set("render_res", r.value);
@@ -1872,48 +1920,145 @@ void RenderResCombo() {
         }
         ImGui::EndCombo();
     }
-    HelpMarker(T("El tamaño al que el juego dibuja la escena 3D. Por encima de 1080p usa el modo PS4 Pro del juego "
-                 "y la imagen sale en 4K: en una pantalla 1080p eso quita los dientes de sierra. "
-                 "4K necesita una GPU potente (una RTX 3070 va a unos 100 FPS); 720p y 480p alivian PCs modestos "
-                 "(la imagen sale a 1080p).",
+    HelpMarker(T("الدقة التي ترسم بها اللعبة المشهد ثلاثي الأبعاد. فوق 1080p تستخدم اللعبة وضع PS4 Pro (يُفعَّل تلقائياً) وتخرج الصورة بدقة 4K: على شاشة 1080p هذا يزيل الحواف المسننة. دقة 4K تحتاج كرت شاشة قوياً (RTX 3070 يشغلها بحوالي 100 FPS)؛ 720p و 480p تساعد الأجهزة الضعيفة (تخرج الصورة بدقة 1080p).",
                  "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path (turned "
                  "on automatically) and the picture is output at 4K: on a 1080p screen that removes jagged "
                  "edges. 4K needs a strong GPU (an RTX 3070 runs it at about 100 FPS); 720p and 480p help low-end "
                  "PCs (the picture is output at 1080p)."));
 }
 
-void SettingsTab() {
+/// Settings, in the Nitro look's three cards: part 0 graphics, 1 display, 2 game (the Online &
+/// Multi card is OnlineSettings). The same settings and keys as before, regrouped.
+void SettingsTab(int part) {
     App& a = g_app;
-    ImGui::TextColored(kGrey, "%s", T("Se aplican al pulsar Jugar. El menú del juego (Insert o L3+R3) cambia los mismos ajustes.",
-                                      "Applied when you press Play. The in-game menu (Insert or L3+R3) changes the same settings."));
-
-    Section(T("Rendimiento", "Performance"));
+    if (part == 0) {
+    GameFlag("msaa", T("MSAA اللعبة (2x)", "Game MSAA (2x)"), false,
+             T("مانع التسنن 2x الخاص بـ PS4. معطّل افتراضياً: على PC يرسم خطوطاً منقطة في السماء وفي أشعة الضوء. بالدقات العالية أو مع FSR/DLSS لا يكاد يُلاحظ غيابه. يحتاج إعادة تشغيل.",
+               "The PS4's 2x anti-aliasing. Off by default: on PC it draws dotted lines in the sky and "
+               "in light shafts. At high internal resolutions or with FSR/DLSS it is barely missed. "
+               "Needs a restart."));
+    const std::string temporal = GameTemporal();
+    const std::string aspect_now = GameAspect();
+    const bool uw_on = aspect_now != "16:9";
+    const bool dlss_sized = temporal == "dlss" && a.game.Get("dlss_quality", "auto") != "auto";
+    ImGui::BeginDisabled(dlss_sized);
+    RenderResCombo();
+    ImGui::EndDisabled();
+    if (dlss_sized) {
+        ImGui::SameLine();
+        ImGui::TextColored(kGrey, "%s", T("(تحددها جودة DLSS)", "(set by the DLSS quality)"));
+    }
     {
-        int limit = a.game.Int("fps_limit", 60);
-        auto name = [](int v) -> std::string {
-            if (v == 0) return T("Sin límite", "No limit");
-            return std::to_string(v) + " FPS";
-        };
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-        if (ImGui::BeginCombo(T("Límite de FPS", "FPS limit"), name(limit).c_str())) {
-            for (int v : kFpsLimits) {
-                if (ImGui::Selectable(name(v).c_str(), v == limit)) {
-                    a.game.Set("fps_limit", std::to_string(v));
+        // temporal=off|fsr1|fsr3|dlss|fsr4 (bbport.ini): one upscaler at a time.
+        // v0.3: off while ultrawide is on (run.py forces it).
+        static constexpr Choice kTemporal[] = {{"معطّل", "Off", "off"},
+                                               {"AMD FSR 1", "AMD FSR 1", "fsr1"},
+                                               {"AMD FSR 3", "AMD FSR 3", "fsr3"},
+                                               {"AMD FSR 4 (تجريبي)", "AMD FSR 4 (experimental)", "fsr4"},
+                                               {"NVIDIA DLSS", "NVIDIA DLSS", "dlss"}};
+        ImGui::BeginDisabled(uw_on);
+        if (GameChoiceCombo(T("رفع الدقة (Upscaling)", "Upscaling"), "temporal", kTemporal, temporal.c_str(), 16.0f)) {
+            a.game.Erase("fsr1");
+            a.game.Erase("fsr3");
+            SaveGameIni();
+        }
+        ImGui::EndDisabled();
+        if (uw_on) {
+            ImGui::SameLine();
+            ImGui::TextColored(kGrey, "%s", T("(معطّل مع UltraWide)", "(off with ultrawide)"));
+        }
+        HelpMarker(T("FSR 1 يكبّر مشهداً أصغر بحواف أوضح من تمديد اللعبة العادي. FSR 3 و FSR 4 و DLSS تعيد بناء التفاصيل عبر عدة إطارات من عمق وحركة اللعبة، وتنعّم الحواف حتى بنفس الدقة. DLSS يحتاج كرت NVIDIA RTX (وإلا يعمل FSR 3)؛ FSR 4 يحتاج دعم INT8 وملفات نموذجه (وإلا يعمل FSR 3). FSR 4 تجريبي. انتقل إلى FSR 1 إن رأيت آثاراً أو وميضاً.",
+                     "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3, FSR 4 and DLSS "
+                     "rebuild detail over several frames from the game's depth and motion, and smooth edges even at the "
+                     "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise); FSR 4 needs INT8 support "
+                     "and its model files (FSR 3 runs otherwise). FSR 4 is experimental. Switch to "
+                     "FSR 1 if you see trails or shimmering."));
+    }
+    if (temporal == "dlss") {
+        static constexpr Choice kQuality[] = {
+            {"تلقائي (الدقة الداخلية)", "Auto (internal resolution)", "auto"},
+            {"DLAA (أصلية)", "DLAA (native)", "dlaa"},
+            {"Quality", "Quality", "quality"},
+            {"Balanced", "Balanced", "balanced"},
+            {"Performance", "Performance", "performance"},
+            {"Ultra Performance", "Ultra Performance", "ultra_performance"}};
+        if (GameChoiceCombo(T("جودة DLSS", "DLSS quality"), "dlss_quality", kQuality, "auto", 16.0f)) SaveGameIni();
+        HelpMarker(T("التلقائي يستخدم الدقة الداخلية أعلاه. الباقي يرسم المشهد بنسبة NVIDIA من مخرج DLSS: Quality 67% و Balanced 58% و Performance 50% و Ultra Performance 33% و DLAA 100%.",
+                     "Auto uses the internal resolution above. The others draw the scene at NVIDIA's share of the DLSS "
+                     "output: Quality 67%, Balanced 58%, Performance 50%, Ultra Performance 33%, DLAA 100%."));
+        if (a.game.Get("dlss_quality", "auto") != "auto") {
+            static constexpr Choice kOutput[] = {{"1920 x 1080", "1920 x 1080", "1080"},
+                                                 {"3840 x 2160 (4K)", "3840 x 2160 (4K)", "2160"}};
+            if (GameChoiceCombo(T("مخرج DLSS", "DLSS output"), "dlss_output", kOutput, "1080", 16.0f)) SaveGameIni();
+        }
+        static constexpr Choice kModel[] = {{"Transformer (موصى به)", "Transformer (recommended)", "transformer"},
+                                            {"CNN", "CNN", "cnn"}};
+        if (GameChoiceCombo(T("نموذج DLSS", "DLSS model"), "dlss_model", kModel, "transformer", 16.0f)) SaveGameIni();
+        HelpMarker(T("Transformer: نموذج NVIDIA الحالي (DLSS 4)، أوضح وأثبت وأثقل قليلاً. CNN: النموذج الأقدم (preset E)، أخف؛ وتعتبره NVIDIA قديماً.",
+                     "Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little heavier. CNN: the "
+                     "older model (preset E), lighter; NVIDIA marks it deprecated."));
+    }
+    if (temporal == "fsr3") {
+        float sharp = float(std::atof(a.game.Get("fsr3_sharpness", "0.30").c_str()));
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+        if (NitroSlider(T("حدّة FSR 3", "FSR 3 sharpness"), &sharp, 0.0f, 1.0f, "%.2f")) {
+            char text[16];
+            std::snprintf(text, sizeof text, "%.2f", sharp);
+            a.game.Set("fsr3_sharpness", text);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveGameIni();
+    }
+    {
+        // framegen=off|fsr3 (bbport.ini): AMD FSR 3 frame generation, one interpolated
+        // frame between each pair of game frames. Live in game (Insert menu) too.
+        static constexpr Choice kFramegen[] = {{"معطّل", "Off", "off"},
+                                               {"AMD FSR 3 (تجريبي)", "AMD FSR 3 (experimental)", "fsr3"}};
+        std::string current = g_app.game.Get("framegen", "off");
+        if (current == "fsr" || current == "on" || current == "1") current = "fsr3"; // test builds
+        const Choice* selected = &kFramegen[0];
+        for (const auto& c : kFramegen)
+            if (current == c.value) selected = &c;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        if (NitroBeginCombo(T("توليد الإطارات (Frame generation)", "Frame generation"), T(selected->es, selected->en))) {
+            for (const auto& c : kFramegen) {
+                if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
+                    a.game.Set("framegen", c.value);
                     SaveGameIni();
                 }
             }
             ImGui::EndCombo();
         }
-        HelpMarker(T("Con el parche de 60 FPS el juego va tan rápido como permita tu PC. En una pantalla de 144 Hz sin "
-                     "G-Sync/FreeSync, 72 reparte los fotogramas de forma pareja.",
-                     "With the 60 FPS patch the game runs as fast as your PC allows. On a 144 Hz screen without "
-                     "G-Sync/FreeSync, 72 divides the refresh evenly."));
+        HelpMarker(T("يعرض إطاراً مُولَّداً بين كل إطارين من اللعبة: حوالي ضعف الإطارات على الشاشة. اللعبة وحدّ FPS وتوقيتها لا تتغير. الأفضل على شاشات 120 Hz فأكثر واللعبة بنصف معدل التحديث (مثلاً حد 72 على 144 Hz). يعمل مع أي Upscaler؛ و FSR 3/4 و DLSS يعطيانه حركة اللعبة أيضاً. تجريبي: عناصر HUD السريعة قد تهتز.",
+                     "Shows an interpolated frame between each pair of game frames: about twice the frames on screen. "
+                     "The game, its FPS limit and its timing do not change. Best on 120 Hz+ screens with the game at "
+                     "half the refresh rate (e.g. a 72 limit at 144 Hz). Works with any upscaler; FSR 3/4 and DLSS "
+                     "also give it the game's motion. Experimental: fast HUD elements may shimmer."));
+        if (current != "off") {
+            static constexpr Choice kMotion[] = {
+                {"Optical flow (موصى به)", "Optical flow (recommended)", "flow"},
+                {"حركة اللعبة + Optical flow", "Game motion + optical flow", "game"}};
+            const std::string motion = g_app.game.Get("framegen_motion", "flow");
+            const Choice* chosen = &kMotion[0];
+            for (const auto& c : kMotion)
+                if (motion == c.value) chosen = &c;
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+            if (NitroBeginCombo(T("مصدر الحركة لتوليد الإطارات", "Frame generation motion"),
+                                  T(chosen->es, chosen->en))) {
+                for (const auto& c : kMotion) {
+                    if (ImGui::Selectable(T(c.es, c.en), &c == chosen)) {
+                        a.game.Set("framegen_motion", c.value);
+                        SaveGameIni();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            HelpMarker(T("Optical flow يتتبع ما يتحرك على الشاشة بما فيه السيارات. حركة اللعبة (مع FSR 3/4 أو DLSS) تحرك السيارات مع الكاميرا وقد تلطخها.",
+                         "Optical flow follows what moves on screen, karts included. The game's motion (with FSR 3/4 "
+                         "or DLSS) moves karts with the camera and can smear them."));
+        }
     }
-    GameFlag("async_pipelines", T("Compilar shaders en segundo plano (experimental)", "Compile shaders in the background (experimental)"), false,
-             T("Menos tirones la primera vez que aparece un efecto; a veces un efecto tarda un fotograma en verse.",
-               "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
-    Section(T("Pantalla", "Display"));
+    } else if (part == 1) {
     {
         // v0.3 native (by tcosi): ONE dropdown sets aspect + output together, so they
         // can never mismatch. The two ultrawide XMLs stay hidden in Patches.
@@ -1945,10 +2090,10 @@ void SettingsTab() {
         const bool warm = UltrawideCacheWarm();
         if (!warm) {
             ImGui::TextColored(kYellow, "%s",
-                               T("El ultra-panorámico se desbloquea tras jugar una vez en 16:9 hasta el menú.",
+                               T("يُفتح UltraWide بعد اللعب مرة واحدة بدقة 16:9 حتى القائمة.",
                                  "Ultrawide unlocks after playing once in 16:9 up to the menu."));
         }
-        if (ImGui::BeginCombo(T("Aspecto / salida", "Aspect / output"), T(selected->es, selected->en))) {
+        if (NitroBeginCombo(T("نسبة العرض / المخرج", "Aspect / output"), T(selected->es, selected->en))) {
             for (const auto& o : kOptions) {
                 const bool locked = std::strcmp(o.aspect, "16:9") != 0 && !warm;
                 ImGui::BeginDisabled(locked);
@@ -1961,13 +2106,7 @@ void SettingsTab() {
             }
             ImGui::EndCombo();
         }
-        HelpMarker(T("Una sola opción: aspecto y salida juntos, con HUD centrado en ultra-panorámico. "
-                     "Mientras hay ultra-panorámico el escalado se desactiva y la resolución interna se limita a 1440p. "
-                     "La primera vez prepara unos 9 GB de archivos; tus archivos originales no cambian. "
-                     "Antes de usarlo, una vez en 16:9: 1) JUGAR hasta el menú principal y quédate unos segundos "
-                     "(entra a Opciones y sal); 2) cierra el juego desde su menú, no lo mates ni uses Alt+F4, "
-                     "para que la caché se guarde. Si al lanzar el ultra te pide caché igualmente, entra a una "
-                     "carrera 30 segundos y sal: eso compila el segundo shader del HUD.",
+        HelpMarker(T("خيار واحد: نسبة العرض والمخرج معاً، مع HUD في المنتصف عند UltraWide. أثناء UltraWide يتعطل Upscaling وتُحدّ الدقة الداخلية بـ 1440p. أول تشغيل يجهز حوالي 9 GB من الملفات؛ ملفاتك الأصلية تبقى. قبل استخدامه، مرة واحدة بـ 16:9: 1) اضغط PLAY حتى القائمة الرئيسية وابقَ بضع ثوانٍ (افتح Options واخرج)؛ 2) أغلق اللعبة من قائمتها، لا تقتلها ولا تستخدم Alt+F4، لكي تُحفظ ذاكرة الـ cache. إن طلب UltraWide الـ cache مع ذلك، ادخل سباقاً لمدة 30 ثانية واخرج: هذا يبني الـ shader الثاني للـ HUD.",
                      "One choice: aspect and output together, with centered HUD in ultrawide. "
                      "Upscaling is off while ultrawide is on and internal resolution is capped at 1440p. "
                      "The first run prepares about 9 GB of files; your original files are kept. "
@@ -1976,102 +2115,17 @@ void SettingsTab() {
                      "so the cache is saved. If launching ultrawide still asks for cache, enter a race "
                      "for 30 seconds and exit: that compiles the second HUD shader."));
     }
-    GameFlag("msaa", T("MSAA del juego (2x)", "Game MSAA (2x)"), false,
-             T("El antialiasing 2x de la PS4. Desactivado por defecto: en PC dibuja líneas punteadas en el "
-               "cielo y en los rayos de luz. A resoluciones altas o con FSR/DLSS casi no se nota. "
-               "Requiere reiniciar.",
-               "The PS4's 2x anti-aliasing. Off by default: on PC it draws dotted lines in the sky and "
-               "in light shafts. At high internal resolutions or with FSR/DLSS it is barely missed. "
-               "Needs a restart."));
-    const std::string temporal = GameTemporal();
-    const std::string aspect_now = GameAspect();
-    const bool uw_on = aspect_now != "16:9";
-    const bool dlss_sized = temporal == "dlss" && a.game.Get("dlss_quality", "auto") != "auto";
-    ImGui::BeginDisabled(dlss_sized);
-    RenderResCombo();
-    ImGui::EndDisabled();
-    if (dlss_sized) {
-        ImGui::SameLine();
-        ImGui::TextColored(kGrey, "%s", T("(la decide la calidad de DLSS)", "(set by the DLSS quality)"));
-    }
-    {
-        // temporal=off|fsr1|fsr3|dlss|fsr4 (bbport.ini): one upscaler at a time.
-        // v0.3: off while ultrawide is on (run.py forces it).
-        static constexpr Choice kTemporal[] = {{"Desactivado", "Off", "off"},
-                                               {"AMD FSR 1", "AMD FSR 1", "fsr1"},
-                                               {"AMD FSR 3", "AMD FSR 3", "fsr3"},
-                                               {"AMD FSR 4 (experimental)", "AMD FSR 4 (experimental)", "fsr4"},
-                                               {"NVIDIA DLSS", "NVIDIA DLSS", "dlss"}};
-        ImGui::BeginDisabled(uw_on);
-        if (GameChoiceCombo(T("Escalado", "Upscaling"), "temporal", kTemporal, temporal.c_str(), 16.0f)) {
-            a.game.Erase("fsr1");
-            a.game.Erase("fsr3");
-            SaveGameIni();
-        }
-        ImGui::EndDisabled();
-        if (uw_on) {
-            ImGui::SameLine();
-            ImGui::TextColored(kGrey, "%s", T("(desactivado con ultra-panorámico)", "(off with ultrawide)"));
-        }
-        HelpMarker(T("FSR 1 agranda una escena más pequeña con bordes más nítidos que el estirado simple del juego. "
-                     "FSR 3, FSR 4 y DLSS reconstruyen el detalle a lo largo de varios cuadros con la profundidad y el movimiento "
-                     "del juego, y a la misma resolución también suavizan los bordes. DLSS necesita una tarjeta NVIDIA "
-                     "RTX (si no, se usa FSR 3); FSR 4 necesita soporte INT8 y sus modelos (si no, se usa FSR 3). "
-                     "FSR 4 es experimental. Si ves estelas o parpadeos, cambia a FSR 1.",
-                     "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3, FSR 4 and DLSS "
-                     "rebuild detail over several frames from the game's depth and motion, and smooth edges even at the "
-                     "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise); FSR 4 needs INT8 support "
-                     "and its model files (FSR 3 runs otherwise). FSR 4 is experimental. Switch to "
-                     "FSR 1 if you see trails or shimmering."));
-    }
-    if (temporal == "dlss") {
-        static constexpr Choice kQuality[] = {
-            {"Automática (resolución interna)", "Auto (internal resolution)", "auto"},
-            {"DLAA (nativa)", "DLAA (native)", "dlaa"},
-            {"Calidad", "Quality", "quality"},
-            {"Equilibrado", "Balanced", "balanced"},
-            {"Rendimiento", "Performance", "performance"},
-            {"Ultra rendimiento", "Ultra Performance", "ultra_performance"}};
-        if (GameChoiceCombo(T("Calidad de DLSS", "DLSS quality"), "dlss_quality", kQuality, "auto", 16.0f)) SaveGameIni();
-        HelpMarker(T("Automática usa la resolución interna de arriba. Las demás dibujan la escena a la proporción de NVIDIA "
-                     "respecto a la salida de DLSS: Calidad 67 %, Equilibrado 58 %, Rendimiento 50 %, Ultra rendimiento "
-                     "33 %, DLAA 100 %.",
-                     "Auto uses the internal resolution above. The others draw the scene at NVIDIA's share of the DLSS "
-                     "output: Quality 67%, Balanced 58%, Performance 50%, Ultra Performance 33%, DLAA 100%."));
-        if (a.game.Get("dlss_quality", "auto") != "auto") {
-            static constexpr Choice kOutput[] = {{"1920 x 1080", "1920 x 1080", "1080"},
-                                                 {"3840 x 2160 (4K)", "3840 x 2160 (4K)", "2160"}};
-            if (GameChoiceCombo(T("Salida de DLSS", "DLSS output"), "dlss_output", kOutput, "1080", 16.0f)) SaveGameIni();
-        }
-        static constexpr Choice kModel[] = {{"Transformer (recomendado)", "Transformer (recommended)", "transformer"},
-                                            {"CNN", "CNN", "cnn"}};
-        if (GameChoiceCombo(T("Modelo de DLSS", "DLSS model"), "dlss_model", kModel, "transformer", 16.0f)) SaveGameIni();
-        HelpMarker(T("Transformer: el modelo actual de NVIDIA (DLSS 4), más nítido y estable, algo más pesado. CNN: el "
-                     "modelo anterior (preset E), más ligero; NVIDIA lo marca como obsoleto.",
-                     "Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little heavier. CNN: the "
-                     "older model (preset E), lighter; NVIDIA marks it deprecated."));
-    }
-    if (temporal == "fsr3") {
-        float sharp = float(std::atof(a.game.Get("fsr3_sharpness", "0.30").c_str()));
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
-        if (ImGui::SliderFloat(T("Nitidez de FSR 3", "FSR 3 sharpness"), &sharp, 0.0f, 1.0f, "%.2f")) {
-            char text[16];
-            std::snprintf(text, sizeof text, "%.2f", sharp);
-            a.game.Set("fsr3_sharpness", text);
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveGameIni();
-    }
-    GameFlag("fullscreen", T("Pantalla completa", "Fullscreen"), false);
-    GameFlag("show_fps", T("Contador de FPS en la esquina", "FPS counter in the corner"), false);
+    GameFlag("fullscreen", T("ملء الشاشة", "Fullscreen"), false);
+    GameFlag("show_fps", T("عداد FPS في الزاوية", "FPS counter in the corner"), false);
     {
         std::scoped_lock lock{a.mutex};
         const std::string current = a.launcher.Get("display");
-        std::string preview = T("Principal", "Primary");
+        std::string preview = T("الرئيسية", "Primary");
         for (const auto& [value, label] : a.displays)
             if (value == current) preview = label;
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22.0f);
-        if (ImGui::BeginCombo(T("Monitor", "Monitor"), preview.c_str())) {
-            if (ImGui::Selectable(T("Principal", "Primary"), current.empty())) {
+        if (NitroBeginCombo(T("الشاشة", "Monitor"), preview.c_str())) {
+            if (ImGui::Selectable(T("الرئيسية", "Primary"), current.empty())) {
                 a.launcher.Set("display", "");
                 SaveLauncher();
             }
@@ -2085,99 +2139,74 @@ void SettingsTab() {
         }
     }
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-    ChoiceCombo(T("Presentación", "Presentation"), "present_mode", kPresentModes, "Mailbox");
+    ChoiceCombo(T("طريقة العرض (Present mode)", "Presentation"), "present_mode", kPresentModes, "Mailbox");
     {
-        // framegen=off|fsr3 (bbport.ini): AMD FSR 3 frame generation, one interpolated
-        // frame between each pair of game frames. Live in game (Insert menu) too.
-        static constexpr Choice kFramegen[] = {{"Desactivada", "Off", "off"},
-                                               {"AMD FSR 3 (experimental)", "AMD FSR 3 (experimental)", "fsr3"}};
-        std::string current = g_app.game.Get("framegen", "off");
-        if (current == "fsr" || current == "on" || current == "1") current = "fsr3"; // test builds
-        const Choice* selected = &kFramegen[0];
-        for (const auto& c : kFramegen)
-            if (current == c.value) selected = &c;
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-        if (ImGui::BeginCombo(T("Generación de cuadros", "Frame generation"), T(selected->es, selected->en))) {
-            for (const auto& c : kFramegen) {
-                if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
-                    a.game.Set("framegen", c.value);
+        int limit = a.game.Int("fps_limit", 60);
+        auto name = [](int v) -> std::string {
+            if (v == 0) return T("بلا حد", "No limit");
+            return std::to_string(v) + " FPS";
+        };
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (NitroBeginCombo(T("حد FPS", "FPS limit"), name(limit).c_str())) {
+            for (int v : kFpsLimits) {
+                if (ImGui::Selectable(name(v).c_str(), v == limit)) {
+                    a.game.Set("fps_limit", std::to_string(v));
                     SaveGameIni();
                 }
             }
             ImGui::EndCombo();
         }
-        HelpMarker(T("Muestra un cuadro interpolado entre cada par de cuadros del juego: casi el doble en pantalla. "
-                     "El juego, su límite de FPS y su ritmo no cambian. Ideal en monitores de 120 Hz o más con el juego "
-                     "a la mitad de la frecuencia (p. ej. límite 72 en 144 Hz). Funciona con cualquier escalado; FSR 3/4 "
-                     "y DLSS le dan además el movimiento del juego. Experimental: el HUD rápido puede vibrar.",
-                     "Shows an interpolated frame between each pair of game frames: about twice the frames on screen. "
-                     "The game, its FPS limit and its timing do not change. Best on 120 Hz+ screens with the game at "
-                     "half the refresh rate (e.g. a 72 limit at 144 Hz). Works with any upscaler; FSR 3/4 and DLSS "
-                     "also give it the game's motion. Experimental: fast HUD elements may shimmer."));
-        if (current != "off") {
-            static constexpr Choice kMotion[] = {
-                {"Flujo óptico (recomendado)", "Optical flow (recommended)", "flow"},
-                {"Movimiento del juego + flujo óptico", "Game motion + optical flow", "game"}};
-            const std::string motion = g_app.game.Get("framegen_motion", "flow");
-            const Choice* chosen = &kMotion[0];
-            for (const auto& c : kMotion)
-                if (motion == c.value) chosen = &c;
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-            if (ImGui::BeginCombo(T("Movimiento para generar", "Frame generation motion"),
-                                  T(chosen->es, chosen->en))) {
-                for (const auto& c : kMotion) {
-                    if (ImGui::Selectable(T(c.es, c.en), &c == chosen)) {
-                        a.game.Set("framegen_motion", c.value);
-                        SaveGameIni();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            HelpMarker(T("El flujo óptico sigue lo que se mueve en pantalla, karts incluidos. El movimiento del juego "
-                         "(con FSR 3/4 o DLSS) mueve los karts con la cámara y puede emborronarlos.",
-                         "Optical flow follows what moves on screen, karts included. The game's motion (with FSR 3/4 "
-                         "or DLSS) moves karts with the camera and can smear them."));
-        }
+        HelpMarker(T("مع باتش 60 FPS تعمل اللعبة بأقصى سرعة يسمح بها جهازك. على شاشة 144 Hz بدون G-Sync/FreeSync، الرقم 72 يقسم التحديث بالتساوي.",
+                     "With the 60 FPS patch the game runs as fast as your PC allows. On a 144 Hz screen without "
+                     "G-Sync/FreeSync, 72 divides the refresh evenly."));
     }
+    GameFlag("async_pipelines", T("بناء الـ Shaders في الخلفية (تجريبي)", "Compile shaders in the background (experimental)"), false,
+             T("تقطيع أقل عند ظهور مؤثر لأول مرة؛ قد يتأخر ظهور المؤثر إطاراً واحداً.",
+               "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
-    Section(T("Mando", "Controller"));
-    ImGui::TextColored(kGrey, "%s  %s", ICON_GAMEPAD,
-                       T("Los mandos, los jugadores y los botones están en la pestaña Controles.",
-                         "Controllers, players and buttons are in the Controls tab."));
-    ImGui::SameLine();
-    if (ImGui::SmallButton(T("Ir a Controles", "Open Controls"))) g_goto_tab = "controls";
-
-    Section(T("Consola", "Console"));
+    } else {
     if (a.launcher.Get("language") != GameLanguage()) a.launcher.Set("language", GameLanguage());
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
     if (EuEdition()) {
-        ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguagesEu, DefaultGameLanguage());
-        HelpMarker(T("Edición europea (CUSA14876): los idiomas de la versión PAL. Si el juego no trae uno, sale en "
-                     "inglés. Se aplica al pulsar Jugar.",
+        ChoiceCombo(T("لغة اللعبة", "Game language"), "language", kGameLanguagesEu, DefaultGameLanguage());
+        HelpMarker(T("النسخة الأوروبية (CUSA14876): لغات إصدار PAL. اللغة غير الموجودة في اللعبة تظهر بالإنجليزية. تُطبَّق عند الضغط على PLAY.",
                      "European edition (CUSA14876): the PAL release's languages. A language the game lacks shows "
                      "English. Applied when you press Play."));
     } else {
-        ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
-        HelpMarker(T("Los idiomas que trae esta versión del juego (CUSA13795, América): inglés, español "
-                     "latinoamericano, francés y portugués de Brasil. El español de España no está en ella. Se aplica "
-                     "al pulsar Jugar.",
+        ChoiceCombo(T("لغة اللعبة", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
+        HelpMarker(T("لغات هذه النسخة من اللعبة (CUSA13795، الأمريكتين): الإنجليزية والإسبانية اللاتينية والفرنسية والبرتغالية البرازيلية. الإسبانية الإسبانية غير موجودة فيها. تُطبَّق عند الضغط على PLAY.",
                      "The languages this build of the game has (CUSA13795, the Americas): English, Latin American "
                      "Spanish, French and Brazilian Portuguese. Spain's Spanish is not in it. Applied when you press "
                      "Play."));
     }
+        Section(T("يد التحكم", "Controller"));
+    ImGui::TextColored(kGrey, "%s  %s", ICON_GAMEPAD,
+                       T("أيادي التحكم واللاعبون والأزرار في تبويب التحكم.",
+                         "Controllers, players and buttons are in the Controls tab."));
+    ImGui::SameLine();
+    if (ImGui::SmallButton(T("فتح التحكم", "Open Controls"))) g_goto_tab = "controls";
+
+    }
+}
+
+/// The note under the Settings title.
+void SettingsIntro() {
+    ImGui::TextColored(kGrey, "%s", T("تُطبَّق عند الضغط على PLAY. قائمة اللعبة (Insert أو L3+R3) تغيّر نفس الإعدادات.",
+                                      "Applied when you press Play. The in-game menu (Insert or L3+R3) changes the same settings."));
+
 }
 
 void PatchesTab() {
     App& a = g_app;
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(kGrey, "%s", T("Se aplican al iniciar el juego (o con \"Apply and restart\" del menú del juego).",
+    ImGui::TextColored(kGrey, "%s", T("تُطبَّق عند بدء اللعبة (أو بـ \"Apply and restart\" من قائمة اللعبة).",
                                       "Applied when the game starts (or with the in-game menu's \"Apply and restart\")."));
-    ImGui::TextColored(kGrey, "%s", T("El ultra-panorámico 21:9/32:9 está en Ajustes > Pantalla > Aspecto / salida.",
+    ImGui::TextColored(kGrey, "%s", T("UltraWide بنسبة 21:9/32:9 موجود في الإعدادات > الشاشة > نسبة العرض / المخرج.",
                                       "Ultrawide 21:9/32:9 is in Settings > Display > Aspect / output."));
     ImGui::PopTextWrapPos();
     const bool neo = a.launcher.Flag("neo", false);
     if (a.patches.empty()) {
-        ImGui::TextColored(kYellow, "%s", T("No hay parches en la carpeta patches.", "No patches in the patches folder."));
+        ImGui::TextColored(kYellow, "%s", T("لا توجد باتشات في مجلد patches.", "No patches in the patches folder."));
     }
     for (const auto& p : a.patches) {
         ImGui::PushID(p.key.c_str());
@@ -2200,7 +2229,7 @@ void PatchesTab() {
         // render_res decides the 1080p Pro patch (Settings > Internal resolution).
         if (needs_neo) on = EffectiveRenderRes() == "1080" && neo;
         ImGui::BeginDisabled(needs_neo);
-        if (ImGui::Checkbox(p.name.c_str(), &on)) {
+        if (ToggleSwitch(p.name.c_str(), &on)) {
             if (p.ini_key) {
                 a.game.Set(p.ini_key, on ? "1" : "0");
                 SaveGameIni();
@@ -2216,12 +2245,12 @@ void PatchesTab() {
         ImGui::EndDisabled();
         if (!p.author.empty()) {
             ImGui::SameLine();
-            ImGui::TextColored(kGrey, "%s %s%s%s", T("de", "by"), p.author.c_str(), p.version.empty() ? "" : "  v",
+            ImGui::TextColored(kGrey, "%s %s%s%s", T("بواسطة", "by"), p.author.c_str(), p.version.empty() ? "" : "  v",
                                p.version.c_str());
         }
         ImGui::Indent();
         ImGui::PushTextWrapPos(0.0f);
-        if (needs_neo) ImGui::TextColored(kGrey, "%s", T("Lo controla Ajustes > Resolución interna (1080p con el modo PS4 Pro).",
+        if (needs_neo) ImGui::TextColored(kGrey, "%s", T("يتحكم فيه: الإعدادات > الدقة الداخلية (1080p مع وضع PS4 Pro).",
                                                           "Controlled by Settings > Internal resolution (1080p with PS4 Pro mode)."));
         if (!p.note.empty()) ImGui::TextColored(kGrey, "%s", p.note.c_str());
         ImGui::TextColored(kGrey, "%s", p.key.c_str());
@@ -2230,25 +2259,22 @@ void PatchesTab() {
         ImGui::PopID();
     }
 
-    Section(T("Añadir parches", "Add patches"));
+    Section(T("إضافة باتشات", "Add patches"));
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(T("Copia archivos .xml de parches en formato shadPS4 (como los de PS-Game-Patch o GoldHEN) en la "
-                             "carpeta patches y pulsa Recargar. Solo aparecen los que son para CUSA13795 versión 01.21.",
+    ImGui::TextUnformatted(T("انسخ ملفات الباتش .xml بتنسيق shadPS4 (مثل PS-Game-Patch أو GoldHEN) إلى مجلد patches واضغط إعادة التحميل. تظهر فقط باتشات CUSA13795 إصدار 01.21.",
                              "Copy patch .xml files in shadPS4 format (like PS-Game-Patch's or GoldHEN's) into the patches "
                              "folder and press Reload. Only those for CUSA13795 version 01.21 are listed."));
-    ImGui::TextColored(kGrey, "%s", T("Por ahora no existen trucos públicos para CTR Nitro-Fueled (como desbloquear todos los "
-                                      "personajes). Para tener el juego desbloqueado puedes importar una partida en la pestaña "
-                                      "Guardados.",
+    ImGui::TextColored(kGrey, "%s", T("لا توجد بعد غشّات عامة لـ CTR Nitro-Fueled (مثل فتح كل الشخصيات). لفتح اللعبة يمكنك استيراد حفظ من تبويب الحفظ.",
                                       "There are no public cheats for CTR Nitro-Fueled yet (like unlocking every character). To "
                                       "have the game unlocked you can import a save in the Saves tab."));
     ImGui::PopTextWrapPos();
-    if (ImGui::Button(T("Abrir la carpeta de parches", "Open the patches folder"))) {
+    if (ImGui::Button(T("فتح مجلد patches", "Open the patches folder"))) {
         std::error_code ec;
         fs::create_directories(a.root / L"patches", ec);
         OpenInShell(a.root / L"patches");
     }
     ImGui::SameLine();
-    if (ImGui::Button(T("Recargar", "Reload"))) {
+    if (ImGui::Button(T("إعادة التحميل", "Reload"))) {
         a.patches = LoadPatches();
         ReadPatchConfig(a.patch_enabled, a.patch_disabled);
     }
@@ -2263,18 +2289,18 @@ void SavesTab() {
     }
     const bool locked = a.game_running;
     if (locked) {
-        ImGui::TextColored(kYellow, "%s", T("Cierra el juego para copiar, importar o restaurar partidas.",
+        ImGui::TextColored(kYellow, "%s", T("أغلق اللعبة لنسخ الحفظ احتياطياً أو استيراده أو استعادته.",
                                             "Close the game to back up, import or restore saves."));
     }
-    Section(T("Partidas", "Saves"));
+    Section(T("الحفظ", "Saves"));
     ImGui::TextColored(kGrey, "%s", PathText(SaveRoot()).c_str());
     if (a.saves.empty()) {
-        ImGui::TextUnformatted(T("Todavía no hay partidas guardadas.", "No saves yet."));
+        ImGui::TextUnformatted(T("لا يوجد حفظ بعد.", "No saves yet."));
     } else if (ImGui::BeginTable("saves", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn(T("Ranura", "Slot"), ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn(T("Descripción", "Description"), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn(T("Tamaño", "Size"), ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn(T("Modificada", "Modified"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("الخانة", "Slot"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("الوصف", "Description"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(T("الحجم", "Size"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("آخر تعديل", "Modified"), ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableHeadersRow();
         for (const auto& s : a.saves) {
             ImGui::TableNextRow();
@@ -2294,51 +2320,49 @@ void SavesTab() {
     }
     ImGui::BeginDisabled(locked);
     ImGui::BeginDisabled(a.saves.empty());
-    if (ImGui::Button(T("Hacer copia de seguridad", "Back up now"))) {
+    if (ImGui::Button(T("نسخ احتياطي الآن", "Back up now"))) {
         fs::path made;
         const std::string error = BackupSaves(nullptr, &made);
-        a.notice = error.empty() ? std::string(T("Copia creada: ", "Backup created: ")) + PathText(made.filename()) : error;
+        a.notice = error.empty() ? std::string(T("تم إنشاء النسخة الاحتياطية: ", "Backup created: ")) + PathText(made.filename()) : error;
         a.saves_dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button(T("Exportar...", "Export..."))) {
-        if (const auto dest = PickFolder(a.hwnd, L"Exportar partidas / Export saves", fs::path())) {
+    if (ImGui::Button(T("تصدير...", "Export..."))) {
+        if (const auto dest = PickFolder(a.hwnd, L"تصدير الحفظ / Export saves", fs::path())) {
             const fs::path target = *dest / Widen("CTR-saves-" + Stamp());
             const std::string error = CopyTree(SaveRoot(), target);
-            a.notice = error.empty() ? std::string(T("Partidas exportadas a ", "Saves exported to ")) + PathText(target) : error;
+            a.notice = error.empty() ? std::string(T("تم تصدير الحفظ إلى ", "Saves exported to ")) + PathText(target) : error;
         }
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button(T("Importar...", "Import..."))) {
-        if (const auto from = PickFolder(a.hwnd, L"Importar partida / Import save", fs::path())) {
+    if (ImGui::Button(T("استيراد...", "Import..."))) {
+        if (const auto from = PickFolder(a.hwnd, L"استيراد حفظ / Import save", fs::path())) {
             const std::string error = ImportSaves(*from);
-            a.notice = error.empty() ? std::string(T("Partida importada. La anterior quedó en una copia de seguridad.",
+            a.notice = error.empty() ? std::string(T("تم استيراد الحفظ. تم نسخ السابق احتياطياً.",
                                                      "Save imported. The previous one was backed up."))
                                      : error;
             a.saves_dirty = true;
         }
     }
-    HelpMarker(T("Acepta una copia de seguridad de este launcher, la carpeta CUSA13795 de las partidas de otro PC, o una "
-                 "partida de PS4 descifrada (Apollo Save Tool, Save Wizard: una carpeta con sce_sys\\param.sfo). Antes de "
-                 "importar se hace una copia de seguridad de tus partidas.",
+    HelpMarker(T("يقبل نسخة احتياطية من هذا المشغل، أو مجلد حفظ CUSA13795 من جهاز آخر، أو حفظ PS4 مفكوك التشفير (Apollo Save Tool أو Save Wizard: مجلد فيه sce_sys\\param.sfo). يُنسخ حفظك احتياطياً قبل الاستيراد.",
                  "Takes a backup made by this launcher, the CUSA13795 saves folder from another PC, or a decrypted PS4 "
                  "save (Apollo Save Tool, Save Wizard: a folder with sce_sys\\param.sfo). Your saves are backed up "
                  "before importing."));
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button(T("Abrir carpeta", "Open folder"))) {
+    if (ImGui::Button(T("فتح المجلد", "Open folder"))) {
         std::error_code ec;
         fs::create_directories(SaveRoot(), ec);
         OpenInShell(SaveRoot());
     }
 
-    Section(T("Copias de seguridad", "Backups"));
+    Section(T("النسخ الاحتياطية", "Backups"));
     if (a.backups.empty()) {
-        ImGui::TextColored(kGrey, "%s", T("Todavía no hay copias.", "No backups yet."));
+        ImGui::TextColored(kGrey, "%s", T("لا توجد نسخ احتياطية بعد.", "No backups yet."));
     } else if (ImGui::BeginTable("backups", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn(T("Copia", "Backup"), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn(T("Tamaño", "Size"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("النسخة الاحتياطية", "Backup"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(T("الحجم", "Size"), ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
         for (const auto& b : a.backups) {
@@ -2350,13 +2374,13 @@ void SavesTab() {
             ImGui::TextUnformatted(FormatSize(b.bytes).c_str());
             ImGui::TableNextColumn();
             ImGui::BeginDisabled(locked);
-            if (ImGui::SmallButton(T("Restaurar", "Restore"))) {
+            if (ImGui::SmallButton(T("استعادة", "Restore"))) {
                 a.pending_path = b.path;
                 a.pending_action = 1;
             }
             ImGui::EndDisabled();
             ImGui::TableNextColumn();
-            if (ImGui::SmallButton(T("Borrar", "Delete"))) {
+            if (ImGui::SmallButton(T("حذف", "Delete"))) {
                 a.pending_path = b.path;
                 a.pending_action = 2;
             }
@@ -2364,13 +2388,13 @@ void SavesTab() {
         }
         ImGui::EndTable();
     }
-    if (ImGui::Button(T("Abrir carpeta de copias", "Open backups folder"))) {
+    if (ImGui::Button(T("فتح مجلد النسخ الاحتياطية", "Open backups folder"))) {
         std::error_code ec;
         fs::create_directories(BackupRoot(), ec);
         OpenInShell(BackupRoot());
     }
     ImGui::SameLine();
-    if (ImGui::Button(T("Actualizar", "Refresh"))) a.saves_dirty = true;
+    if (ImGui::Button(T("تحديث", "Refresh"))) a.saves_dirty = true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2389,18 +2413,18 @@ std::map<std::string, std::string> ReadPkgSfo(const fs::path& pkg, std::string& 
     std::ifstream f(pkg, std::ios::binary);
     char header[0x20];
     if (!f.read(header, sizeof header) || std::memcmp(header, "\x7f" "CNT", 4) != 0) {
-        error = T("no es un paquete de PS4", "not a PS4 package");
+        error = T("ليست حزمة PS4", "not a PS4 package");
         return {};
     }
     const uint32_t count = Be32(header + 0x10), table = Be32(header + 0x18);
     if (count == 0 || count > 4096) {
-        error = T("paquete dañado", "damaged package");
+        error = T("حزمة تالفة", "damaged package");
         return {};
     }
     std::string entries(size_t(count) * 32, '\0');
     f.seekg(table);
     if (!f.read(entries.data(), std::streamsize(entries.size()))) {
-        error = T("paquete dañado", "damaged package");
+        error = T("حزمة تالفة", "damaged package");
         return {};
     }
     for (uint32_t i = 0; i < count; ++i) {
@@ -2408,7 +2432,7 @@ std::map<std::string, std::string> ReadPkgSfo(const fs::path& pkg, std::string& 
         if (Be32(e) != 0x1000) continue;
         const uint32_t flags = Be32(e + 8), offset = Be32(e + 16), size = Be32(e + 20);
         if (flags & 0x80000000u) {
-            error = T("param.sfo está cifrado", "param.sfo is encrypted");
+            error = T("ملف param.sfo مشفّر", "param.sfo is encrypted");
             return {};
         }
         if (size > (1u << 20)) break;
@@ -2417,7 +2441,7 @@ std::map<std::string, std::string> ReadPkgSfo(const fs::path& pkg, std::string& 
         if (!f.read(data.data(), size)) break;
         return ParseSfo(data);
     }
-    error = T("no tiene param.sfo", "no param.sfo");
+    error = T("لا يوجد param.sfo", "no param.sfo");
     return {};
 }
 
@@ -2429,7 +2453,7 @@ DlcInfo DescribeDlc(const fs::path& path) {
     std::map<std::string, std::string> sfo;
     if (fs::is_directory(path, ec)) {
         if (!fs::is_regular_file(path / L"sce_sys" / L"param.sfo", ec)) {
-            d.problem = T("la carpeta no tiene sce_sys\\param.sfo", "the folder has no sce_sys\\param.sfo");
+            d.problem = T("المجلد لا يحتوي sce_sys\\param.sfo", "the folder has no sce_sys\\param.sfo");
             return d;
         }
         sfo = ReadSfo(path / L"sce_sys" / L"param.sfo");
@@ -2446,7 +2470,7 @@ DlcInfo DescribeDlc(const fs::path& path) {
     d.label = dash == std::string::npos ? std::string() : content.substr(dash + 1);
     d.title = get("TITLE");
     if (!IsCtrTitle(get("TITLE_ID")) || get("CATEGORY") != "ac" || d.label.size() != 16) {
-        d.problem = T("no es un DLC de CTR Nitro-Fueled (CUSA13795 / CUSA14876)",
+        d.problem = T("ليس DLC للعبة CTR Nitro-Fueled (CUSA13795 / CUSA14876)",
                       "not a CTR Nitro-Fueled (CUSA13795 / CUSA14876) DLC");
         return d;
     }
@@ -2503,7 +2527,7 @@ void AddDlcPackages() {
         }
         ++added;
     }
-    a.notice = std::string(T("DLC añadidos: ", "DLC added: ")) + std::to_string(added) + (problems.empty() ? "" : ". " + problems);
+    a.notice = std::string(T("تمت إضافة DLC: ", "DLC added: ")) + std::to_string(added) + (problems.empty() ? "" : ". " + problems);
     a.dlc_dirty = true;
 }
 
@@ -2514,28 +2538,26 @@ void DlcTab() {
         a.dlc_dirty = false;
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(T("Opcional: el juego funciona igual sin DLC. Los DLC de CTR Nitro-Fueled solo traen la licencia "
-                             "(el contenido ya está en el juego); el port los marca como instalados al iniciar.",
+    ImGui::TextUnformatted(T("اختياري: اللعبة تعمل بنفس الشكل بدون DLC. محتوى DLC للعبة CTR Nitro-Fueled يحمل الترخيص فقط (المحتوى موجود في اللعبة أصلاً)؛ والمشغل يبلغ اللعبة أنها مثبتة عند البدء.",
                              "Optional: the game runs the same without DLC. CTR Nitro-Fueled's DLC only carry the license "
                              "(the content is already in the game); the port reports them installed at start."));
-    ImGui::TextColored(kGrey, "%s", T("Usa tus propios paquetes DLC de PS4 (.pkg) de CUSA13795. Se copian a la carpeta dlc del "
-                                      "port; tus archivos originales no cambian.",
+    ImGui::TextColored(kGrey, "%s", T("استخدم حزم DLC الخاصة بك من PS4 (.pkg) للعبة CUSA13795. تُنسخ إلى مجلد dlc في المشغل؛ ملفاتك الأصلية لا تتغير.",
                                       "Use your own PS4 DLC packages (.pkg) for CUSA13795. They are copied into the port's "
                                       "dlc folder; your original files are not changed."));
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
-    LauncherFlag("dlc", T("Activar los DLC", "Enable DLC"), true);
+    LauncherFlag("dlc", T("تفعيل DLC", "Enable DLC"), true);
     const bool enabled = a.launcher.Flag("dlc", true);
     std::vector<std::string> disabled = SplitList(a.launcher.Get("dlc_disabled"));
 
-    Section(T("DLC encontrados", "DLC found"));
-    if (a.dlc.empty()) ImGui::TextColored(kGrey, "%s", T("No hay DLC en la carpeta dlc.", "No DLC in the dlc folder."));
+    Section(T("DLC الموجودة", "DLC found"));
+    if (a.dlc.empty()) ImGui::TextColored(kGrey, "%s", T("لا يوجد DLC في مجلد dlc.", "No DLC in the dlc folder."));
     ImGui::BeginDisabled(!enabled);
     for (const auto& d : a.dlc) {
         ImGui::PushID(d.file.c_str());
         if (d.ok) {
             bool on = std::find(disabled.begin(), disabled.end(), d.label) == disabled.end();
-            if (ImGui::Checkbox(d.title.c_str(), &on)) {
+            if (ToggleSwitch(d.title.c_str(), &on)) {
                 disabled.erase(std::remove(disabled.begin(), disabled.end(), d.label), disabled.end());
                 if (!on) disabled.push_back(d.label);
                 a.launcher.Set("dlc_disabled", JoinList(disabled));
@@ -2548,7 +2570,7 @@ void DlcTab() {
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(a.game_running);
-        if (ImGui::SmallButton(T("Quitar", "Remove"))) {
+        if (ImGui::SmallButton(T("إزالة", "Remove"))) {
             a.pending_path = d.path;
             a.pending_action = 3;
         }
@@ -2557,16 +2579,16 @@ void DlcTab() {
     }
     ImGui::EndDisabled();
     ImGui::Spacing();
-    if (ImGui::Button(T("Añadir DLC (.pkg)...", "Add DLC (.pkg)..."))) AddDlcPackages();
+    if (ImGui::Button(T("إضافة DLC (.pkg)...", "Add DLC (.pkg)..."))) AddDlcPackages();
     ImGui::SameLine();
-    if (ImGui::Button(T("Abrir la carpeta dlc", "Open the dlc folder"))) {
+    if (ImGui::Button(T("فتح مجلد dlc", "Open the dlc folder"))) {
         std::error_code ec;
         fs::create_directories(DlcRoot(), ec);
         OpenInShell(DlcRoot());
     }
     ImGui::SameLine();
-    if (ImGui::Button(T("Actualizar##dlc", "Refresh##dlc"))) a.dlc_dirty = true;
-    ImGui::TextColored(kGrey, "%s", T("Los cambios se aplican la próxima vez que pulses Jugar.", "Changes apply the next time you press Play."));
+    if (ImGui::Button(T("تحديث##dlc", "Refresh##dlc"))) a.dlc_dirty = true;
+    ImGui::TextColored(kGrey, "%s", T("التغييرات تُطبَّق في المرة القادمة عند الضغط على PLAY.", "Changes apply the next time you press Play."));
 }
 
 void SaveConfirmations() {
@@ -2579,20 +2601,20 @@ void SaveConfirmations() {
     if (ImGui::BeginPopupModal("save_confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
         const std::string name = PathText(a.pending_path.filename());
         if (a.confirm_action == 1) {
-            ImGui::Text(T("¿Restaurar %s?", "Restore %s?"), name.c_str());
-            ImGui::TextColored(kGrey, "%s", T("Tus partidas actuales se guardan antes en una copia automática.",
+            ImGui::Text(T("استعادة %s؟", "Restore %s?"), name.c_str());
+            ImGui::TextColored(kGrey, "%s", T("يُنسخ حفظك الحالي احتياطياً تلقائياً أولاً.",
                                               "Your current saves are backed up automatically first."));
         } else if (a.confirm_action == 3) {
-            ImGui::Text(T("¿Quitar %s de la carpeta dlc?", "Remove %s from the dlc folder?"), name.c_str());
-            ImGui::TextColored(kGrey, "%s", T("Solo se borra la copia del port.", "Only the port's copy is deleted."));
+            ImGui::Text(T("إزالة %s من مجلد dlc؟", "Remove %s from the dlc folder?"), name.c_str());
+            ImGui::TextColored(kGrey, "%s", T("تُحذف نسخة المشغل فقط.", "Only the port's copy is deleted."));
         } else {
-            ImGui::Text(T("¿Borrar la copia %s? No se puede deshacer.", "Delete the backup %s? This cannot be undone."), name.c_str());
+            ImGui::Text(T("حذف النسخة الاحتياطية %s؟ لا يمكن التراجع.", "Delete the backup %s? This cannot be undone."), name.c_str());
         }
-        if (ImGui::Button(a.confirm_action == 1 ? T("Restaurar", "Restore") : a.confirm_action == 3 ? T("Quitar", "Remove") : T("Borrar", "Delete"))) {
+        if (ImGui::Button(a.confirm_action == 1 ? T("استعادة", "Restore") : a.confirm_action == 3 ? T("إزالة", "Remove") : T("حذف", "Delete"))) {
             std::string error;
             if (a.confirm_action == 1) {
                 error = RestoreBackup(a.pending_path);
-                if (error.empty()) a.notice = std::string(T("Restaurada: ", "Restored: ")) + name;
+                if (error.empty()) a.notice = std::string(T("تمت الاستعادة: ", "Restored: ")) + name;
             } else {
                 std::error_code ec;
                 fs::remove_all(a.pending_path, ec);
@@ -2604,7 +2626,7 @@ void SaveConfirmations() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Cancelar", "Cancel"))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(T("إلغاء", "Cancel"))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
@@ -2621,31 +2643,31 @@ struct KeyInput {
     const char* fallback;  // runtime_pad.c bind_defaults()
 };
 constexpr KeyInput kKeyInputs[] = {
-    {"move_up", "Stick izquierdo arriba", "Left stick up", "W"},
-    {"move_down", "Stick izquierdo abajo", "Left stick down", "S"},
-    {"move_left", "Stick izquierdo izquierda (girar)", "Left stick left (steer)", "A"},
-    {"move_right", "Stick izquierdo derecha (girar)", "Left stick right (steer)", "D"},
-    {"cross", "X (acelerar)", "Cross (accelerate)", "Space"},
-    {"square", "Cuadrado (frenar)", "Square (brake)", "E"},
-    {"circle", "Círculo", "Circle", "Left Shift"},
-    {"triangle", "Triángulo", "Triangle", "Q"},
+    {"move_up", "العصا اليسرى أعلى", "Left stick up", "W"},
+    {"move_down", "العصا اليسرى أسفل", "Left stick down", "S"},
+    {"move_left", "العصا اليسرى يسار (توجيه)", "Left stick left (steer)", "A"},
+    {"move_right", "العصا اليسرى يمين (توجيه)", "Left stick right (steer)", "D"},
+    {"cross", "X (تسارع)", "Cross (accelerate)", "Space"},
+    {"square", "مربع (فرامل)", "Square (brake)", "E"},
+    {"circle", "دائرة", "Circle", "Left Shift"},
+    {"triangle", "مثلث", "Triangle", "Q"},
     {"r1", "R1", "R1", "3"},
     {"l1", "L1", "L1", "1"},
     {"r2", "R2", "R2", "F"},
     {"l2", "L2", "L2", "R"},
     {"l3", "L3", "L3", "Z"},
     {"r3", "R3", "R3", "C"},
-    {"options", "Options (pausa)", "Options (pause)", "Return"},
-    {"touchpad", "Panel táctil", "Touchpad", "Tab"},
-    {"touchpad_right", "Panel táctil (derecha)", "Touchpad (right)", "Backspace"},
-    {"up", "Cruceta arriba", "D-pad up", "I"},
-    {"down", "Cruceta abajo", "D-pad down", "K"},
-    {"left", "Cruceta izquierda", "D-pad left", "J"},
-    {"right", "Cruceta derecha", "D-pad right", "L"},
-    {"look_up", "Stick derecho arriba", "Right stick up", "Up"},
-    {"look_down", "Stick derecho abajo", "Right stick down", "Down"},
-    {"look_left", "Stick derecho izquierda", "Right stick left", "Left"},
-    {"look_right", "Stick derecho derecha", "Right stick right", "Right"},
+    {"options", "Options (إيقاف مؤقت)", "Options (pause)", "Return"},
+    {"touchpad", "لوحة اللمس", "Touchpad", "Tab"},
+    {"touchpad_right", "لوحة اللمس (يمين)", "Touchpad (right)", "Backspace"},
+    {"up", "الأسهم أعلى", "D-pad up", "I"},
+    {"down", "الأسهم أسفل", "D-pad down", "K"},
+    {"left", "الأسهم يسار", "D-pad left", "J"},
+    {"right", "الأسهم يمين", "D-pad right", "L"},
+    {"look_up", "العصا اليمنى أعلى", "Right stick up", "Up"},
+    {"look_down", "العصا اليمنى أسفل", "Right stick down", "Down"},
+    {"look_left", "العصا اليمنى يسار", "Right stick left", "Left"},
+    {"look_right", "العصا اليمنى يمين", "Right stick right", "Right"},
 };
 
 // Scan code set 1 (WM_KEYDOWN lParam bits 16-23, + 0x100 for E0-extended) -> SDL scancode name.
@@ -2677,17 +2699,17 @@ const char* SdlKeyName(unsigned code) {
 // How a key name reads in the launcher.
 std::string KeyLabel(const std::string& name) {
     static const std::map<std::string, std::pair<const char*, const char*>> labels = {
-        {"Space", {"Espacio", "Space"}}, {"Return", {"Enter", "Enter"}},
-        {"Backspace", {"Retroceso", "Backspace"}}, {"Left Shift", {"Mayús izq.", "Left Shift"}},
-        {"Right Shift", {"Mayús der.", "Right Shift"}}, {"Left Ctrl", {"Ctrl izq.", "Left Ctrl"}},
-        {"Right Ctrl", {"Ctrl der.", "Right Ctrl"}}, {"Left Alt", {"Alt", "Left Alt"}},
-        {"Right Alt", {"Alt Gr", "Right Alt"}}, {"Up", {"Flecha arriba", "Up arrow"}},
-        {"Down", {"Flecha abajo", "Down arrow"}}, {"Left", {"Flecha izquierda", "Left arrow"}},
-        {"Right", {"Flecha derecha", "Right arrow"}}, {"CapsLock", {"Bloq Mayús", "Caps Lock"}},
-        {"Delete", {"Supr", "Delete"}}, {"Home", {"Inicio", "Home"}}, {"End", {"Fin", "End"}},
-        {"PageUp", {"Re Pág", "Page Up"}}, {"PageDown", {"Av Pág", "Page Down"}},
-        {"`", {"Tecla a la izquierda del 1", "` key"}},
-        {"NonUSBackslash", {"Tecla < >", "< > key"}}, {"Keypad Enter", {"Enter (teclado num.)", "Keypad Enter"}},
+        {"Space", {"Space", "Space"}}, {"Return", {"Enter", "Enter"}},
+        {"Backspace", {"Backspace", "Backspace"}}, {"Left Shift", {"Shift الأيسر", "Left Shift"}},
+        {"Right Shift", {"Shift الأيمن", "Right Shift"}}, {"Left Ctrl", {"Ctrl الأيسر", "Left Ctrl"}},
+        {"Right Ctrl", {"Ctrl الأيمن", "Right Ctrl"}}, {"Left Alt", {"Alt", "Left Alt"}},
+        {"Right Alt", {"Alt Gr", "Right Alt"}}, {"Up", {"السهم أعلى", "Up arrow"}},
+        {"Down", {"السهم أسفل", "Down arrow"}}, {"Left", {"السهم يسار", "Left arrow"}},
+        {"Right", {"السهم يمين", "Right arrow"}}, {"CapsLock", {"Caps Lock", "Caps Lock"}},
+        {"Delete", {"Delete", "Delete"}}, {"Home", {"Home", "Home"}}, {"End", {"End", "End"}},
+        {"PageUp", {"Page Up", "Page Up"}}, {"PageDown", {"Page Down", "Page Down"}},
+        {"`", {"المفتاح ` (يسار 1)", "` key"}},
+        {"NonUSBackslash", {"المفتاح < >", "< > key"}}, {"Keypad Enter", {"Enter (لوحة الأرقام)", "Keypad Enter"}},
     };
     const auto it = labels.find(name);
     if (it != labels.end()) return T(it->second.first, it->second.second);
@@ -2712,11 +2734,10 @@ std::vector<std::string> SplitKeys(const std::string& value) {
 
 void KeyboardTab() {
     App& a = g_app;
-    ImGui::TextWrapped("%s", T("Teclas del jugador 1. El teclado funciona a la vez que el mando. Pulsa \"Cambiar\" y luego la "
-                               "tecla; cada acción admite hasta 4 teclas. Se guarda en bbport.ini y vale desde el próximo arranque.",
+    ImGui::TextWrapped("%s", T("مفاتيح اللاعب 1. لوحة المفاتيح تعمل مع يد التحكم. اضغط \"تغيير\" ثم المفتاح؛ كل أمر يقبل حتى 4 مفاتيح. تُحفظ في bbport.ini وتُستخدم من التشغيل التالي.",
                                "Player 1's keys. The keyboard works together with the controller. Press \"Change\", then the key; "
                                "each action takes up to 4 keys. Saved in bbport.ini, used from the next start."));
-    ImGui::TextColored(kGrey, "%s", T("Insert abre el menú del juego y Esc cancela, por eso no se pueden asignar.",
+    ImGui::TextColored(kGrey, "%s", T("مفتاح Insert يفتح قائمة اللعبة و Esc يلغي، لذلك لا يمكن ربطهما.",
                                       "Insert opens the in-game menu and Esc cancels, so they cannot be bound."));
     const int capturing = g_key_capture;
     if (capturing >= 0) {
@@ -2739,16 +2760,16 @@ void KeyboardTab() {
                 SaveGameIni();
                 g_key_capture = -1;
             } else {
-                a.notice = T("Esa tecla no se puede asignar.", "That key cannot be bound.");
+                a.notice = T("لا يمكن ربط هذا المفتاح.", "That key cannot be bound.");
                 g_key_capture = -1;
             }
         }
     }
 
-    Section(T("Controles", "Controls"));
+    Section(T("التحكم", "Controls"));
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        ImGui::TableSetupColumn(T("Teclas", "Keys"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn(T("الأمر", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn(T("المفاتيح", "Keys"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
         for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
@@ -2764,9 +2785,9 @@ void KeyboardTab() {
             ImGui::TableNextColumn();
             ImGui::AlignTextToFramePadding();
             if (capturing == i) {
-                ImGui::TextColored(kYellow, "%s", T("Pulsa una tecla... (Esc cancela)", "Press a key... (Esc cancels)"));
+                ImGui::TextColored(kYellow, "%s", T("اضغط مفتاحاً... (Esc للإلغاء)", "Press a key... (Esc cancels)"));
             } else if (keys.empty()) {
-                ImGui::TextColored(kGrey, "%s", T("(sin tecla)", "(none)"));
+                ImGui::TextColored(kGrey, "%s", T("(لا شيء)", "(none)"));
             } else {
                 std::string text;
                 for (const auto& k : keys) text += (text.empty() ? "" : "  /  ") + KeyLabel(k);
@@ -2775,20 +2796,20 @@ void KeyboardTab() {
             }
             ImGui::TableNextColumn();
             ImGui::BeginDisabled(capturing >= 0);
-            if (ImGui::SmallButton(T("Cambiar", "Change"))) {
+            if (ImGui::SmallButton(T("تغيير", "Change"))) {
                 // A key replaces the default binding; on a custom one it is added (up to 4).
                 g_key_replace = !custom;
                 g_key_captured = 0;
                 g_key_capture = i;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton(T("Quitar", "Clear"))) {
+            if (ImGui::SmallButton(T("مسح", "Clear"))) {
                 a.game.Set(key, "");
                 SaveGameIni();
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(!custom);
-            if (ImGui::SmallButton(T("Original", "Default"))) {
+            if (ImGui::SmallButton(T("الافتراضي", "Default"))) {
                 a.game.Erase(key);
                 SaveGameIni();
             }
@@ -2800,12 +2821,12 @@ void KeyboardTab() {
     }
     ImGui::Spacing();
     ImGui::BeginDisabled(capturing >= 0);
-    if (ImGui::Button(T("Restaurar todas las teclas", "Restore all keys"))) {
+    if (ImGui::Button(T("استعادة كل المفاتيح", "Restore all keys"))) {
         for (const auto& in : kKeyInputs) a.game.Erase(std::string("key.") + in.id);
         SaveGameIni();
     }
     ImGui::EndDisabled();
-    ImGui::TextColored(kGrey, "%s", T("Gris: tecla original. Las teclas van por su posición en el teclado.",
+    ImGui::TextColored(kGrey, "%s", T("الرمادي: المفتاح الافتراضي. المفاتيح تُحفظ حسب مكانها على لوحة المفاتيح.",
                                       "Grey: default key. Keys go by their place on the keyboard."));
 }
 
@@ -2905,13 +2926,13 @@ void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, floa
         const float v = std::clamp(st.axes[axis] / 32767.0f, 0.0f, 1.0f);
         dl->AddRectFilled(P(x0, 0.0f), P(x1, 0.04f), idle, R(0.012f));
         if (v > 0.01f) dl->AddRectFilled(P(x0, 0.0f), P(x0 + (x1 - x0) * v, 0.04f), on, R(0.012f));
-        centered(P((x0 + x1) * 0.5f, 0.02f), Label(button, info.family, info.type, g_spanish), text);
+        centered(P((x0 + x1) * 0.5f, 0.02f), Label(button, info.family, info.type, g_arabic), text);
     };
     trigger(0.14f, 0.34f, AxTriggerLeft, BtnLeftTrigger);
     trigger(0.66f, 0.86f, AxTriggerRight, BtnRightTrigger);
     auto shoulder = [&](float x0, float x1, int button) {
         dl->AddRectFilled(P(x0, 0.055f), P(x1, 0.095f), st.buttons[button] ? on : idle, R(0.012f));
-        centered(P((x0 + x1) * 0.5f, 0.075f), Label(button, info.family, info.type, g_spanish), text);
+        centered(P((x0 + x1) * 0.5f, 0.075f), Label(button, info.family, info.type, g_arabic), text);
     };
     shoulder(0.14f, 0.34f, BtnLeftShoulder);
     shoulder(0.66f, 0.86f, BtnRightShoulder);
@@ -2955,7 +2976,7 @@ void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, floa
                                 down ? ink : Col(ImVec4(0.96f, 0.60f, 0.88f, 1.0f)), 0.0f, 0, th);
                 }
             } else {
-                std::string l = Label(f.b, info.family, info.type, g_spanish);
+                std::string l = Label(f.b, info.family, info.type, g_arabic);
                 if (l.size() > 1) l = l.substr(0, 1);
                 centered(at, l, ink);
             }
@@ -3007,26 +3028,24 @@ void ControllersPage() {
     auto players_of = [&](const Pads::Info& p) {
         std::string out;
         for (int n = 1; n <= 4; ++n)
-            if (PlayerPad(n) == p.guid) out += (out.empty() ? "" : " ") + std::string(T("J", "P")) + std::to_string(n);
+            if (PlayerPad(n) == p.guid) out += (out.empty() ? "" : " ") + std::string(T("P", "P")) + std::to_string(n);
         return out;
     };
 
-    Section(T("Mandos conectados", "Connected controllers"));
+    Section(T("أيادي التحكم المتصلة", "Connected controllers"));
     if (a.game_running) {
         ImGui::TextColored(kYellow, "%s  %s", ICON_INFO,
-                           T("El juego está abierto y usa los mandos. Ciérralo para probarlos aquí; dentro del juego, "
-                             "Insert › Controllers asigna los puertos.",
+                           T("اللعبة تعمل وتستخدم أيادي التحكم. أغلقها لتجربتها هنا؛ وداخل اللعبة يوزّع Insert · Controllers المنافذ.",
                              "The game is running and has the controllers. Close it to test them here; in the game, "
                              "Insert › Controllers assigns the ports."));
     } else if (!sdl) {
-        ImGui::TextColored(kRed, "%s  %s: %s", ICON_WARN, T("No se pueden leer los mandos", "Controllers cannot be read"),
+        ImGui::TextColored(kRed, "%s  %s: %s", ICON_WARN, T("تعذّرت قراءة أيادي التحكم", "Controllers cannot be read"),
                            Pads::Error().c_str());
     } else if (pads.empty()) {
         BeginCard("nopads");
         ImGui::TextColored(kGrey, "%s", ICON_GAMEPAD);
         ImGui::SameLine();
-        ImGui::TextWrapped("%s", T("No hay mandos conectados. Conecta uno por USB o Bluetooth: aparece aquí al momento. "
-                                   "El teclado funciona siempre (página Teclado).",
+        ImGui::TextWrapped("%s", T("لا توجد يد تحكم متصلة. وصّل واحدة بـ USB أو اقرنها بـ Bluetooth: تظهر هنا فوراً. لوحة المفاتيح تعمل دائماً (صفحة لوحة المفاتيح).",
                                    "No controllers connected. Plug one in over USB or pair it over Bluetooth: it shows "
                                    "up here at once. The keyboard always works (Keyboard page)."));
         EndCard();
@@ -3052,10 +3071,10 @@ void ControllersPage() {
                 const float tx = at.x + pad_x + ImGui::GetFontSize() * 2.0f;
                 dl->AddText(g_font_heading ? g_font_heading : ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, at.y + row * 0.12f), Col(kText),
                             display(p).c_str());
-                std::string sub = Pads::TypeName(p.type, g_spanish);
-                if (p.wireless) sub += std::string(" · ") + ICON_BLUETOOTH + T(" inalámbrico", " wireless");
+                std::string sub = Pads::TypeName(p.type, g_arabic);
+                if (p.wireless) sub += std::string(" · ") + ICON_BLUETOOTH + T(" لاسلكية", " wireless");
                 else if (p.wired) sub += std::string(" · ") + ICON_USB + " USB";
-                if (p.battery >= 0) sub += " · " + std::to_string(p.battery) + "%" + (p.charging ? T(" cargando", " charging") : "");
+                if (p.battery >= 0) sub += " · " + std::to_string(p.battery) + "%" + (p.charging ? T(" تشحن", " charging") : "");
                 dl->AddText(ImVec2(tx, at.y + row * 0.12f + line * 1.15f), Col(kGrey), sub.c_str());
                 const std::string who = players_of(p);
                 if (!who.empty()) {
@@ -3075,26 +3094,26 @@ void ControllersPage() {
                 const int inner = std::clamp(a.launcher.Int("pad_deadzone", 5), 0, 126);
                 const int outer = std::clamp(a.launcher.Int("pad_deadzone_outer", 127), inner + 1, 127);
                 DrawPad(p, st, inner / 127.0f, outer / 127.0f);
-                ImGui::TextColored(kGrey, T("Stick izq. %+.2f %+.2f   Stick der. %+.2f %+.2f", "Left %+.2f %+.2f   Right %+.2f %+.2f"),
+                ImGui::TextColored(kGrey, T("اليسار %+.2f %+.2f   اليمين %+.2f %+.2f", "Left %+.2f %+.2f   Right %+.2f %+.2f"),
                                    st.axes[Pads::AxLeftX] / 32767.0f, st.axes[Pads::AxLeftY] / 32767.0f,
                                    st.axes[Pads::AxRightX] / 32767.0f, st.axes[Pads::AxRightY] / 32767.0f);
-                if (ImGui::Button((std::string(ICON_VIBRATE "  ") + T("Vibrar", "Rumble")).c_str())) {
-                    if (!Pads::Rumble(p.id, 450)) a.notice = T("Este mando no admite vibración.", "This controller has no rumble.");
+                if (ImGui::Button((std::string(ICON_VIBRATE "  ") + T("الاهتزاز", "Rumble")).c_str())) {
+                    if (!Pads::Rumble(p.id, 450)) a.notice = T("هذه اليد لا تدعم الاهتزاز.", "This controller has no rumble.");
                 }
                 ImGui::SameLine();
-                ImGui::TextColored(kGrey, "%s", T("Pulsa botones y mueve los sticks para probarlo.",
+                ImGui::TextColored(kGrey, "%s", T("اضغط الأزرار وحرّك العصي لتجربتها.",
                                                   "Press buttons and move the sticks to test it."));
             }
             ImGui::EndTable();
         }
     }
 
-    Section(T("Jugadores", "Players"));
+    Section(T("اللاعبون", "Players"));
     for (int n = 1; n <= 4; ++n) {
         ImGui::PushID(n);
         const std::string current = PlayerPad(n);
-        std::string preview = n == 1 ? T("Automático: el último mando que uses", "Automatic: the last controller used")
-                                     : T("Nadie", "Nobody");
+        std::string preview = n == 1 ? T("تلقائي: آخر يد تحكم مستخدمة", "Automatic: the last controller used")
+                                     : T("لا أحد", "Nobody");
         if (!current.empty()) {
             preview = a.launcher.Get("port_name." + std::to_string(n));
             if (preview.empty() && n == 1) preview = a.launcher.Get("gamepad_name");
@@ -3105,41 +3124,39 @@ void ControllersPage() {
                     preview = display(p);
                     connected = true;
                 }
-            if (!connected && sdl) preview += T(" (no conectado)", " (not connected)");
+            if (!connected && sdl) preview += T(" (غير متصلة)", " (not connected)");
         }
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted((std::string(T("Jugador ", "Player ")) + std::to_string(n)).c_str());
+        ImGui::TextUnformatted((std::string(T("اللاعب ", "Player ")) + std::to_string(n)).c_str());
         ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22.0f);
-        if (ImGui::BeginCombo("##player", preview.c_str())) {
-            if (ImGui::Selectable(n == 1 ? T("Automático: el último mando que uses", "Automatic: the last controller used")
-                                         : T("Nadie", "Nobody"),
+        if (NitroBeginCombo("##player", preview.c_str())) {
+            if (ImGui::Selectable(n == 1 ? T("تلقائي: آخر يد تحكم مستخدمة", "Automatic: the last controller used")
+                                         : T("لا أحد", "Nobody"),
                                   current.empty()))
                 SetPlayerPad(n, nullptr);
             for (const auto& p : pads) {
                 ImGui::PushID(int(p.id));
-                const std::string label = display(p) + "  (" + Pads::TypeName(p.type, g_spanish) + ")";
+                const std::string label = display(p) + "  (" + Pads::TypeName(p.type, g_arabic) + ")";
                 if (ImGui::Selectable(label.c_str(), p.guid == current)) SetPlayerPad(n, &p);
                 ImGui::PopID();
             }
             ImGui::EndCombo();
         }
         if (n == 1)
-            HelpMarker(T("El jugador 1 también usa el teclado. En automático juega el mando que toques: coge cualquiera y pulsa un botón.",
+            HelpMarker(T("اللاعب 1 يستخدم لوحة المفاتيح أيضاً. في الوضع التلقائي تلعب اليد التي تلمسها: اختر أي يد واضغط زراً.",
                          "Player 1 also uses the keyboard. On automatic, the controller you touch plays: pick any and press a button."));
         if (n == 2)
-            HelpMarker(T("Jugadores 2 a 4: pantalla dividida. Entran al juego mientras su mando está conectado. También se cambia "
-                         "dentro del juego (Insert › Controllers).",
+            HelpMarker(T("اللاعبون 2 إلى 4: شاشة مقسومة (split screen). ينضمون للعبة ما دامت أيديهم متصلة. ويُضبط أيضاً من داخل اللعبة (Insert · Controllers).",
                          "Players 2 to 4: split screen. They join the game while their controller is connected. Also set in "
                          "the game (Insert › Controllers)."));
         ImGui::PopID();
     }
 
     // Gamepad buttons: pad.<input> in bbport.ini.
-    Section(T("Botones del mando", "Controller buttons"));
+    Section(T("أزرار يد التحكم", "Controller buttons"));
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(kGrey, "%s", T("Lo que hace cada botón en el juego, para todos los mandos. Pulsa \"Cambiar\" y luego el botón "
-                                      "en el mando; cada acción admite hasta 4. Se guarda en bbport.ini y vale desde el próximo arranque.",
+    ImGui::TextColored(kGrey, "%s", T("ماذا يفعل كل زر في اللعبة، لكل يد تحكم. اضغط \"تغيير\" ثم الزر على اليد؛ كل أمر يقبل حتى 4. تُحفظ في bbport.ini وتُستخدم من التشغيل التالي.",
                                       "What each button does in the game, for every controller. Press \"Change\", then the button on "
                                       "the controller; each action takes up to 4. Saved in bbport.ini, used from the next start."));
     ImGui::PopTextWrapPos();
@@ -3169,8 +3186,8 @@ void ControllersPage() {
         }
     }
     if (ImGui::BeginTable("padbuttons", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        ImGui::TableSetupColumn(T("Botones", "Buttons"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn(T("الأمر", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn(T("الأزرار", "Buttons"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
         for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
@@ -3188,26 +3205,26 @@ void ControllersPage() {
             ImGui::TableNextColumn();
             ImGui::AlignTextToFramePadding();
             if (g_pad_capture == i) {
-                ImGui::TextColored(kYellow, "%s", T("Pulsa un botón del mando...", "Press a controller button..."));
+                ImGui::TextColored(kYellow, "%s", T("اضغط زراً على يد التحكم...", "Press a controller button..."));
             } else if (names.empty()) {
-                ImGui::TextColored(kGrey, "%s", T("(sin botón)", "(none)"));
+                ImGui::TextColored(kGrey, "%s", T("(لا شيء)", "(none)"));
             } else {
                 std::string text;
                 for (const auto& n : names) {
                     const int input = Pads::InputFromName(n);
-                    text += (text.empty() ? "" : "  /  ") + (input >= 0 ? Pads::Label(input, family, type, g_spanish) : n);
+                    text += (text.empty() ? "" : "  /  ") + (input >= 0 ? Pads::Label(input, family, type, g_arabic) : n);
                 }
                 ImGui::TextColored(custom ? kText : kGrey, "%s", text.c_str());
             }
             ImGui::TableNextColumn();
             if (g_pad_capture == i) {
-                if (ImGui::SmallButton(T("Cancelar", "Cancel"))) {
+                if (ImGui::SmallButton(T("إلغاء", "Cancel"))) {
                     g_pad_capture = -1;
                     Pads::CancelCapture();
                 }
             } else {
                 ImGui::BeginDisabled(g_pad_capture >= 0 || !sdl || pads.empty());
-                if (ImGui::SmallButton(T("Cambiar", "Change"))) {
+                if (ImGui::SmallButton(T("تغيير", "Change"))) {
                     g_pad_replace = !custom;
                     g_pad_capture = i;
                     Pads::ArmCapture();
@@ -3215,13 +3232,13 @@ void ControllersPage() {
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 ImGui::BeginDisabled(g_pad_capture >= 0);
-                if (ImGui::SmallButton(T("Quitar", "Clear"))) {
+                if (ImGui::SmallButton(T("مسح", "Clear"))) {
                     a.game.Set(key, "");
                     SaveGameIni();
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!custom);
-                if (ImGui::SmallButton(T("Original", "Default"))) {
+                if (ImGui::SmallButton(T("الافتراضي", "Default"))) {
                     a.game.Erase(key);
                     SaveGameIni();
                 }
@@ -3233,44 +3250,41 @@ void ControllersPage() {
         ImGui::EndTable();
     }
     ImGui::BeginDisabled(g_pad_capture >= 0);
-    if (ImGui::Button((std::string(ICON_UNDO "  ") + T("Restaurar todos los botones", "Restore all buttons")).c_str())) {
+    if (ImGui::Button((std::string(ICON_UNDO "  ") + T("استعادة كل الأزرار", "Restore all buttons")).c_str())) {
         for (const auto& in : kKeyInputs)
             if (PadFallback(in.id)) a.game.Erase(std::string("pad.") + in.id);
         SaveGameIni();
     }
     ImGui::EndDisabled();
-    ImGui::TextColored(kGrey, "%s", T("Gris: botón original. Los nombres siguen al mando elegido arriba.",
+    ImGui::TextColored(kGrey, "%s", T("الرمادي: الزر الافتراضي. الأسماء تتبع يد التحكم المختارة أعلاه.",
                                       "Grey: default button. Names follow the controller chosen above."));
 
-    Section(T("Sticks", "Sticks"));
+    Section(T("العصي (Sticks)", "Sticks"));
     {
         int inner = std::clamp(a.launcher.Int("pad_deadzone", 5), 0, 126);
         int outer = std::clamp(a.launcher.Int("pad_deadzone_outer", 127), inner + 1, 127);
         int inner_pct = int(std::lround(inner * 100.0 / 127.0)), outer_pct = int(std::lround(outer * 100.0 / 127.0));
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
-        if (ImGui::SliderInt(T("Zona muerta", "Dead zone"), &inner_pct, 0, 40, "%d %%")) {
+        if (ImGui::SliderInt(T("المنطقة الميتة (Dead zone)", "Dead zone"), &inner_pct, 0, 40, "%d %%")) {
             a.launcher.Set("pad_deadzone", std::to_string(int(std::lround(inner_pct * 127.0 / 100.0))));
             SaveLauncher();
         }
-        HelpMarker(T("Cuánto hay que mover el stick antes de que el juego lo note. Súbela si el kart gira solo (stick con deriva). "
-                     "Por defecto 4 %. Se ve como el anillo gris en la prueba de arriba.",
+        HelpMarker(T("مقدار حركة العصا قبل أن تلاحظها اللعبة. ارفعها إن كانت السيارة تنعطف وحدها (stick drift). الافتراضي 4 %. هي الحلقة الرمادية في التجربة أعلاه.",
                      "How far the stick moves before the game notices. Raise it if the kart steers by itself (stick drift). "
                      "Default 4 %. It is the grey ring in the test above."));
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
-        if (ImGui::SliderInt(T("Giro completo al", "Full turn at"), &outer_pct, 60, 100, "%d %%")) {
+        if (ImGui::SliderInt(T("الانعطاف الكامل عند", "Full turn at"), &outer_pct, 60, 100, "%d %%")) {
             a.launcher.Set("pad_deadzone_outer", std::to_string(int(std::lround(outer_pct * 127.0 / 100.0))));
             SaveLauncher();
         }
-        HelpMarker(T("Con menos del 100 % el giro llega al máximo antes del tope del stick: útil con sticks gastados o mandos "
-                     "que no llegan al borde. Es el anillo naranja.",
+        HelpMarker(T("تحت 100 % يصل الانعطاف لأقصاه قبل حافة العصا: مفيد للعصي البالية أو الأيادي التي لا تصل للحافة. هي الحلقة البرتقالية.",
                      "Below 100 % the turn reaches its maximum before the stick's edge: useful for worn sticks or "
                      "controllers that do not reach the edge. It is the orange ring."));
-        LauncherFlag("pad_center_cal", T("Corregir el centro de mandos genéricos", "Correct the centre of generic controllers"), true,
-                     T("Algunos mandos clónicos dicen estar inclinados con el stick suelto; el port mide su centro al conectarlos. "
-                       "Desactívalo solo si un mando original se comporta raro.",
+        LauncherFlag("pad_center_cal", T("تصحيح مركز الأيادي غير الأصلية", "Correct the centre of generic controllers"), true,
+                     T("بعض الأيادي المقلدة تبلغ عن ميلان والعصا ساكنة؛ المشغل يقيس مركزها عند الاتصال. عطّله فقط إن تصرفت يد أصلية بشكل غريب.",
                        "Some clone controllers report a tilt with the stick at rest; the port measures their centre when they "
                        "connect. Turn it off only if a genuine controller behaves oddly."));
-        if (ImGui::Button((std::string(ICON_UNDO "  ") + T("Valores por defecto", "Defaults")).c_str())) {
+        if (ImGui::Button((std::string(ICON_UNDO "  ") + T("الافتراضيات", "Defaults")).c_str())) {
             a.launcher.Erase("pad_deadzone");
             a.launcher.Erase("pad_deadzone_outer");
             a.launcher.Erase("pad_center_cal");
@@ -3281,14 +3295,14 @@ void ControllersPage() {
 
 void ControlsTab() {
     if (ImGui::BeginTabBar("controls")) {
-        if (ImGui::BeginTabItem((std::string(ICON_GAMEPAD "  ") + T("Mandos", "Controllers") + "###pads").c_str())) {
+        if (ImGui::BeginTabItem((std::string(ICON_GAMEPAD "  ") + T("أيادي التحكم", "Controllers") + "###pads").c_str())) {
             if (g_key_capture >= 0) g_key_capture = -1;
             ImGui::BeginChild("pads");
             ControllersPage();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem((std::string(ICON_KEYBOARD "  ") + T("Teclado", "Keyboard") + "###keys").c_str())) {
+        if (ImGui::BeginTabItem((std::string(ICON_KEYBOARD "  ") + T("لوحة المفاتيح", "Keyboard") + "###keys").c_str())) {
             if (g_pad_capture >= 0) {
                 g_pad_capture = -1;
                 Pads::CancelCapture();
@@ -3315,6 +3329,57 @@ ID3D11ShaderResourceView* MakeTexture(const uint32_t* bgra, int width, int heigh
 
 // The 48 trophies' names, grades and what to do (src/ctr_trophies.h, shared with the runtime).
 #include "../../src/ctr_trophies.h"
+// What to do for each trophy, in Arabic, by id (the launcher only; ctr_trophies.h stays Spanish/English).
+const char* const kTrophyArabic[] = {
+    "احصل على كل الكؤوس الأخرى.",
+    "اربح أول سباق لك في وضع المغامرة (Adventure).",
+    "اهزم Ripper Roo في وضع المغامرة.",
+    "اهزم Papu Papu في وضع المغامرة.",
+    "اهزم Komodo Joe في وضع المغامرة.",
+    "اهزم Pinstripe في وضع المغامرة.",
+    "اهزم Nitros Oxide لأول مرة.",
+    "اهزم Nitros Oxide مرة أخرى بعد إكمال المغامرة 100%.",
+    "أكمل تحدي كريستال (Crystal Challenge) في وضع المغامرة.",
+    "اربح تحدي CTR في وضع المغامرة.",
+    "اربح سباق آثار (Relic Race) في وضع المغامرة.",
+    "اربح كأساً في وضع المغامرة.",
+    "احصل على أقل أثر (Relic) على الأقل في كل حلبة من المغامرة.",
+    "اربح كؤوس الجواهر الخمسة (Gem Cups).",
+    "اجمع كل رموز CTR (CTR Tokens).",
+    "أنهِ السباق متقدماً على المركز الثاني بأقل من 0.3 ثانية.",
+    "أصب منافسَين اثنين بقنبلة Bowling Bomb واحدة.",
+    "نفّذ Super Boost.",
+    "اهزم زعيماً دون أن تصيبك أسلحته.",
+    "انزلق (Drift) 15 مرة متتالية.",
+    "نفّذ خمسة Turbo Boosts ثلاثية متتالية.",
+    "نفّذ 500 Drift Boost إجمالاً.",
+    "أكمل وضع المغامرة على الصعوبة Hard.",
+    "اربح سباقاً بعد أن كنت الأخير في اللفة الأخيرة.",
+    "اصدّ صاروخاً بـ Beaker وصندوق و Bowling Bomb.",
+    "تغلّب على كل أوقات N. Tropy في Time Trial.",
+    "تغلّب على كل أوقات Nitros Oxide في Time Trial.",
+    "اربح سباقاً دون استخدام أي سلاح (Power-Up).",
+    "احصل على المركز الأول في كل حلبات CTR و CNK.",
+    "أصب منافساً بالصواريخ الثلاثة من Triple Missile.",
+    "استخدم كل سلاح (Power-Up) مرة واحدة.",
+    "استخدم الطريق المختصر في Cortex Castle.",
+    "استخدم الطريق المختصر في Polar Pass.",
+    "استخدم الطرق المختصرة الأربعة في Blizzard Bluff في سباق واحد.",
+    "استخدم الطريقين المختصرين في Papu's Pyramid في سباق واحد.",
+    "استخدم الطريق المختصر في Crash Cove.",
+    "استخدم الطريق المختصر في Sewer Speedway.",
+    "استخدم الطريق المختصر في Tiger Temple.",
+    "استخدم الطريق المختصر في Dragon Mines دون أن تُسحق.",
+    "احصل على كؤوس الطرق المختصرة الثمانية.",
+    "استخدم كل سلاح Juiced Up مرة واحدة.",
+    "حافظ على الـ Boost نشطاً طوال لفة كاملة.",
+    "اربح مباراة في كل أوضاع Battle.",
+    "تخلّص من صندوق TNT.",
+    "أصب منافساً مباشرة بـ Beaker مرمي.",
+    "خصّص سيارتك (kart).",
+    "افتح كل شخصيات القائمة الأصلية.",
+    "أكمل كل تحديات الكريستال (CTR و CNK).",
+};
 #define kCtrTrophies ctr_trophies
 
 
@@ -3355,8 +3420,8 @@ void ReleaseTrophies(TrophySet& t) {
     t = TrophySet{};
 }
 
-/// A PNG to a texture, through WIC.
-ID3D11ShaderResourceView* PngTexture(const std::string& png) {
+/// A PNG (or any image WIC reads: the launcher's JPEG artwork) to a texture, through WIC.
+ID3D11ShaderResourceView* PngTexture(const std::string& png, int* width = nullptr, int* height = nullptr) {
     IWICImagingFactory* wic = nullptr;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)))) return nullptr;
     ID3D11ShaderResourceView* view = nullptr;
@@ -3375,6 +3440,8 @@ ID3D11ShaderResourceView* PngTexture(const std::string& png) {
         std::vector<uint32_t> pixels(size_t(w) * h);
         if (SUCCEEDED(converter->CopyPixels(nullptr, w * 4, UINT(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data()))))
             view = MakeTexture(pixels.data(), int(w), int(h));
+        if (view && width) *width = int(w);
+        if (view && height) *height = int(h);
     }
     if (converter) converter->Release();
     if (frame) frame->Release();
@@ -3565,7 +3632,7 @@ void LoadTrophies() {
     TrophySet& t = g_trophies;
     t.game = a.game_dir;
     t.language = GameLanguage();
-    t.spanish = g_spanish;
+    t.spanish = false;  // the built-in names: English (Arabic only through the trophy key)
     t.title_id = GameTitleId();
     const fs::path trp = a.game_dir / L"sce_sys" / L"trophy" / L"trophy00.trp";
     const std::string data = ReadText(trp);
@@ -3575,8 +3642,8 @@ void LoadTrophies() {
     };
     auto be64 = [&](size_t o) { return uint64_t(be32(o)) << 32 | be32(o + 4); };
     if (data.size() < 0x60 || be32(0) != 0xDCA24D00) {
-        t.error = a.game_dir.empty() ? T("Elige primero el juego en la pestaña Jugar.", "Choose the game in the Play tab first.")
-                                     : T("Este juego no trae el archivo de trofeos (sce_sys\\trophy\\trophy00.trp).",
+        t.error = a.game_dir.empty() ? T("اختر اللعبة أولاً من تبويب الرئيسية.", "Choose the game in the Play tab first.")
+                                     : T("هذه اللعبة لا تحتوي ملف كؤوس (sce_sys\\trophy\\trophy00.trp).",
                                          "This game has no trophy file (sce_sys\\trophy\\trophy00.trp).");
         return;
     }
@@ -3627,7 +3694,7 @@ void LoadTrophies() {
                 t.names = true;
                 WriteTrophyTsv(t);
             } else {
-                t.note = T("La clave de trofeos no descifra este juego: revisa que sea la de tu PS4 (32 cifras hexadecimales).",
+                t.note = T("مفتاح الكؤوس لا يفك تشفير هذه اللعبة: تأكد أنه مفتاح جهاز PS4 الخاص بك (32 خانة hex).",
                            "The trophy key does not decrypt this game: check it is your PS4's (32 hex digits).");
             }
         }
@@ -3638,7 +3705,7 @@ void LoadTrophies() {
                 if (b.id == tr.id) {
                     tr.grade = b.grade;
                     tr.name = b.name;
-                    tr.detail = T(b.es, b.en);
+                    tr.detail = T(b.id >= 0 && b.id < int(std::size(kTrophyArabic)) ? kTrophyArabic[b.id] : b.en, b.en);
                 }
         t.title_name = "Crash Team Racing Nitro-Fueled";
         t.names = t.builtin = true;
@@ -3652,7 +3719,7 @@ void TrophiesTab() {
     App& a = g_app;
     const std::string language = GameLanguage();
     if (g_trophies_reload || g_trophies.game != a.game_dir || g_trophies.language != language ||
-        (g_trophies.builtin && g_trophies.spanish != g_spanish)) {
+        (g_trophies.builtin && g_trophies.spanish)) {
         g_trophies_reload = false;
         LoadTrophies();
     }
@@ -3689,9 +3756,9 @@ void TrophiesTab() {
                                           ImVec4(1.0f, 0.80f, 0.29f, 1.0f), ImVec4(0.55f, 0.83f, 1.0f, 1.0f)};
     auto grade_index = [](char g) { return g == 'B' ? 0 : g == 'S' ? 1 : g == 'G' ? 2 : g == 'P' ? 3 : -1; };
     auto grade_name = [](int g) {
-        static const char* es[] = {"Bronce", "Plata", "Oro", "Platino"};
+        static const char* ar[] = {"برونزية", "فضية", "ذهبية", "بلاتينية"};
         static const char* en[] = {"Bronze", "Silver", "Gold", "Platinum"};
-        return g_spanish ? es[g] : en[g];
+        return g_arabic ? ar[g] : en[g];
     };
 
     // Summary.
@@ -3705,7 +3772,7 @@ void TrophiesTab() {
     if (g_font_heading) ImGui::PushFont(g_font_heading, ImGui::GetStyle().FontSizeBase * 1.25f);
     ImGui::TextUnformatted(t.title_name.empty() ? "Crash Team Racing Nitro-Fueled" : t.title_name.c_str());
     if (g_font_heading) ImGui::PopFont();
-    ImGui::Text(T("%d de %d logros  ·  %d %%", "%d of %d trophies  ·  %d %%"), unlocked, total, int(progress * 100.0f + 0.5f));
+    ImGui::Text(T("%d من %d كأساً  ·  %d %%", "%d of %d trophies  ·  %d %%"), unlocked, total, int(progress * 100.0f + 0.5f));
     ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 8.0f * g_ui_scale), "");
     if (t.names) {
         for (int g = 3; g >= 0; --g) {
@@ -3724,7 +3791,7 @@ void TrophiesTab() {
     bool show_key = !t.names;
     if (t.builtin) {
         ImGui::Spacing();
-        show_key = ImGui::CollapsingHeader(T("Usar los textos del propio juego (clave de trofeos)",
+        show_key = ImGui::CollapsingHeader(T("استخدام نصوص اللعبة نفسها (مفتاح الكؤوس)",
                                              "Use the game's own texts (trophy key)"));
     }
     if (show_key) {
@@ -3734,28 +3801,24 @@ void TrophiesTab() {
         ImGui::SameLine();
         ImGui::PushTextWrapPos(0.0f);
         if (t.builtin)
-            ImGui::TextUnformatted(T("Los nombres son los oficiales y las descripciones, un resumen de qué hay que hacer. Los textos "
-                                     "del propio juego (en su idioma) vienen cifrados con la clave de trofeos de la PS4, que no se "
-                                     "incluye: si la tienes (la misma que usa shadPS4), pégala o impórtala para usarlos.",
+            ImGui::TextUnformatted(T("الأسماء رسمية والأوصاف ملخص لما يجب فعله. نصوص اللعبة الأصلية (بلغتها) مشفرة بمفتاح كؤوس PS4 غير المرفق: إن كان لديك (نفس الذي يستخدمه shadPS4) الصقه أو استورده لاستخدامها.",
                                      "Names are the official ones and descriptions a summary of what to do. The game's own texts "
                                      "(in its language) are encrypted with the PS4's trophy key, which is not included: if you "
                                      "have it (the same shadPS4 uses), paste or import it to use them."));
         else
-            ImGui::TextUnformatted(T("Los logros se guardan igual al jugar y aquí se ven con su imagen. Sus nombres y descripciones "
-                                     "vienen cifrados en el juego con la clave de trofeos de la PS4, que no se incluye: si la tienes "
-                                     "(es la misma que usa shadPS4), pégala o impórtala para verlos.",
+            ImGui::TextUnformatted(T("تُسجَّل الكؤوس أثناء اللعب وتظهر هنا بصورها. أسماؤها وأوصافها مشفرة داخل اللعبة بمفتاح كؤوس PS4 غير المرفق: إن كان لديك (نفس الذي يستخدمه shadPS4) الصقه أو استورده لرؤيتها.",
                                      "Trophies are recorded while you play and shown here with their pictures. Their names and "
                                      "descriptions are encrypted in the game with the PS4's trophy key, which is not included: if "
                                      "you have it (the same shadPS4 uses), paste or import it to see them."));
         ImGui::PopTextWrapPos();
         if (!t.note.empty()) ImGui::TextColored(kRed, "%s", t.note.c_str());
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
-        ImGui::InputTextWithHint("##trophykey", T("Clave de trofeos (32 cifras hex)", "Trophy key (32 hex digits)"), g_trophy_key_input,
+        ImGui::InputTextWithHint("##trophykey", T("مفتاح الكؤوس (32 خانة hex)", "Trophy key (32 hex digits)"), g_trophy_key_input,
                                  sizeof g_trophy_key_input, ImGuiInputTextFlags_Password | ImGuiInputTextFlags_CharsHexadecimal);
         ImGui::SameLine();
-        if (ImGui::Button(T("Guardar", "Save"))) {
+        if (ImGui::Button(T("حفظ", "Save"))) {
             if (TrophyKeyBytes(g_trophy_key_input).empty()) {
-                a.notice = T("La clave tiene que tener 32 cifras hexadecimales.", "The key must be 32 hex digits.");
+                a.notice = T("يجب أن يكون المفتاح 32 خانة hex.", "The key must be 32 hex digits.");
             } else {
                 a.launcher.Set("trophy_key", g_trophy_key_input);
                 SaveLauncher();
@@ -3764,10 +3827,10 @@ void TrophiesTab() {
             std::memset(g_trophy_key_input, 0, sizeof g_trophy_key_input);
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Importar de shadPS4", "Import from shadPS4"))) {
+        if (ImGui::Button(T("استيراد من shadPS4", "Import from shadPS4"))) {
             const std::string key = ShadPs4TrophyKey();
             if (TrophyKeyBytes(key).empty()) {
-                a.notice = T("shadPS4 no tiene una clave de trofeos guardada (keys.json).",
+                a.notice = T("لا يوجد مفتاح كؤوس محفوظ في shadPS4 (keys.json).",
                              "shadPS4 has no trophy key saved (keys.json).");
             } else {
                 a.launcher.Set("trophy_key", key);
@@ -3780,20 +3843,20 @@ void TrophiesTab() {
 
     // Filter and actions.
     ImGui::Spacing();
-    ImGui::RadioButton(T("Todos", "All"), &g_trophy_filter, 0);
+    ImGui::RadioButton(T("الكل", "All"), &g_trophy_filter, 0);
     ImGui::SameLine();
-    ImGui::RadioButton(T("Desbloqueados", "Unlocked"), &g_trophy_filter, 1);
+    ImGui::RadioButton(T("مفتوحة", "Unlocked"), &g_trophy_filter, 1);
     ImGui::SameLine();
-    ImGui::RadioButton(T("Por conseguir", "Locked"), &g_trophy_filter, 2);
+    ImGui::RadioButton(T("مقفلة", "Locked"), &g_trophy_filter, 2);
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 13.0f);
-    if (ImGui::Button((std::string(ICON_FOLDER "  ") + T("Carpeta", "Folder")).c_str())) {
+    if (ImGui::Button((std::string(ICON_FOLDER "  ") + T("المجلد", "Folder")).c_str())) {
         std::error_code ec;
         fs::create_directories(TrophyDir(t.title_id), ec);
         OpenInShell(TrophyDir(t.title_id));
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(!unlocked || a.game_running);
-    if (ImGui::Button((std::string(ICON_UNDO "  ") + T("Reiniciar", "Reset")).c_str())) g_trophy_reset_confirm = true;
+    if (ImGui::Button((std::string(ICON_UNDO "  ") + T("إعادة ضبط", "Reset")).c_str())) g_trophy_reset_confirm = true;
     ImGui::EndDisabled();
 
     // The list.
@@ -3831,13 +3894,13 @@ void TrophiesTab() {
             ImGui::Dummy(ImVec2(icon, icon));
             ImGui::TableNextColumn();
             if (g_font_heading) ImGui::PushFont(g_font_heading, 0.0f);
-            std::string name = secret ? T("Logro oculto", "Hidden trophy")
-                               : tr.name.empty() ? std::string(T("Logro #", "Trophy #")) + std::to_string(tr.id)
+            std::string name = secret ? T("كأس مخفي", "Hidden trophy")
+                               : tr.name.empty() ? std::string(T("الكأس #", "Trophy #")) + std::to_string(tr.id)
                                                  : tr.name;
             ImGui::TextColored(tr.unlocked ? kText : kGrey, "%s", name.c_str());
             if (g_font_heading) ImGui::PopFont();
             ImGui::PushTextWrapPos(0.0f);
-            if (secret) ImGui::TextColored(kGrey, "%s", T("Sigue jugando para descubrirlo.", "Keep playing to find it."));
+            if (secret) ImGui::TextColored(kGrey, "%s", T("واصل اللعب لتكتشفه.", "Keep playing to find it."));
             else if (!tr.detail.empty()) ImGui::TextColored(kGrey, "%s", tr.detail.c_str());
             ImGui::PopTextWrapPos();
             ImGui::TableNextColumn();
@@ -3853,14 +3916,14 @@ void TrophiesTab() {
                 std::strftime(date, sizeof date, "%d/%m/%Y %H:%M", &local);
                 ImGui::TextColored(kGreen, "%s %s", ICON_CHECK, date);
             } else if (tr.unlocked) {
-                ImGui::TextColored(kGreen, "%s %s", ICON_CHECK, T("Conseguido", "Unlocked"));
+                ImGui::TextColored(kGreen, "%s %s", ICON_CHECK, T("مفتوحة", "Unlocked"));
             } else {
-                ImGui::TextColored(kGrey, "%s", T("Por conseguir", "Locked"));
+                ImGui::TextColored(kGrey, "%s", T("مقفلة", "Locked"));
             }
         }
         ImGui::EndTable();
     }
-    ImGui::TextColored(kGrey, "%s", T("Se desbloquean jugando, como en la PS4; el platino llega solo al tener todos los demás.",
+    ImGui::TextColored(kGrey, "%s", T("تُفتح أثناء اللعب كما على PS4؛ والبلاتينية تأتي بعد فتح كل الباقي.",
                                       "They unlock as you play, as on a PS4; the platinum comes once all the others are."));
 
     if (g_trophy_reset_confirm) {
@@ -3868,83 +3931,80 @@ void TrophiesTab() {
         g_trophy_reset_confirm = false;
     }
     if (ImGui::BeginPopupModal("trophy_reset", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        ImGui::TextUnformatted(T("¿Volver a bloquear todos los logros? Se guarda una copia por si acaso.",
+        ImGui::TextUnformatted(T("قفل كل الكؤوس من جديد؟ تُحفظ نسخة احتياطاً.",
                                  "Lock every trophy again? A copy is kept just in case."));
-        if (ImGui::Button(T("Reiniciar", "Reset"))) {
+        if (ImGui::Button(T("إعادة ضبط", "Reset"))) {
             std::error_code ec;
             const fs::path file = TrophyDir(t.title_id) / L"unlocked.txt";
             fs::path backup = file;
             backup += L"." + std::to_wstring(std::time(nullptr)) + L".bak";
             fs::rename(file, backup, ec);
-            if (ec) a.notice = std::string(T("No se pudo reiniciar: ", "Could not reset: ")) + ec.message();
+            if (ec) a.notice = std::string(T("تعذّرت إعادة الضبط: ", "Could not reset: ")) + ec.message();
             ReadUnlocked(t);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Cancelar", "Cancel"))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(T("إلغاء", "Cancel"))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 }
 
 void ToolsTab() {
     App& a = g_app;
-    Section(T("Carpetas y registro", "Folders and log"));
-    if (ImGui::Button(T("Abrir last_run.log", "Open last_run.log"))) OpenInShell(a.root / L"last_run.log");
+    Section(T("المجلدات والسجل", "Folders and log"));
+    if (ImGui::Button(T("فتح last_run.log", "Open last_run.log"))) OpenInShell(a.root / L"last_run.log");
     ImGui::SameLine();
-    if (ImGui::Button(T("Abrir la carpeta del port", "Open the port folder"))) OpenInShell(a.root);
+    if (ImGui::Button(T("فتح مجلد المشغل", "Open the port folder"))) OpenInShell(a.root);
     ImGui::SameLine();
-    if (ImGui::Button(T("Abrir partidas guardadas", "Open saves"))) {
+    if (ImGui::Button(T("فتح مجلد الحفظ", "Open saves"))) {
         std::error_code ec;
         fs::create_directories(a.root / L"user", ec);
         OpenInShell(a.root / L"user");
     }
-    LauncherFlag("save_log", T("Guardar registro detallado (logs\\, con estadísticas de fotogramas)",
+    LauncherFlag("save_log", T("حفظ سجل مفصّل (logs\\، مع إحصائيات الإطارات)",
                                "Save a detailed log (logs\\, with frame statistics)"), false,
-                 T("Para reportar fallos o tirones: adjunta el archivo de logs\\ en un issue.",
+                 T("للإبلاغ عن الأعطال أو التقطيع: أرفق الملف من logs\\ في issue.",
                    "To report crashes or stutter: attach the file from logs\\ to an issue."));
 
-    Section(T("Caché de shaders", "Shader cache"));
+    Section(T("ذاكرة الـ Shaders", "Shader cache"));
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(kGrey, "%s", T("Los shaders se guardan para que los siguientes arranques vayan fluidos. Bórrala solo si "
-                                      "actualizaste el driver de la GPU o ves fallos gráficos.",
+    ImGui::TextColored(kGrey, "%s", T("تُحفظ الـ Shaders لتعمل الجلسات التالية بسلاسة. امسحها فقط بعد تحديث تعريف كرت الشاشة أو عند رؤية أخطاء رسومية.",
                                       "Shaders are kept so later sessions run smoothly. Clear it only after a GPU driver "
                                       "update or if you see graphics glitches."));
     ImGui::PopTextWrapPos();
     ImGui::BeginDisabled(a.game_running);
-    if (ImGui::Button(T("Borrar la caché de shaders", "Clear the shader cache"))) a.confirm_clear_cache = true;
+    if (ImGui::Button(T("مسح ذاكرة الـ Shaders", "Clear the shader cache"))) a.confirm_clear_cache = true;
     ImGui::EndDisabled();
 
-    Section(T("Idioma del launcher", "Launcher language"));
-    if (ImGui::RadioButton("Español", g_spanish)) {
-        g_spanish = true;
+    Section(T("لغة المشغل", "Launcher language"));
+    if (ImGui::RadioButton("العربية", g_arabic)) {
+        g_arabic = true;
+        arabic::Install(true);
+        g_trophies_reload = true;  // the built-in trophy texts follow the language
         SaveLauncher();
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("English", !g_spanish)) {
-        g_spanish = false;
+    if (ImGui::RadioButton("English", !g_arabic)) {
+        g_arabic = false;
+        arabic::Install(false);
+        g_trophies_reload = true;  // the built-in trophy texts follow the language
         SaveLauncher();
     }
 
-    Section(T("Acerca de", "About"));
+    Section(T("حول", "About"));
     ImGui::Text("CTR-NitroFueled-PC %s", a.version.c_str());
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(T("Fork de Windows de SacredFire (T3CHNOLOG1C), basado en bbport (deadinside28), el port de Windows "
-                             "de Supermedo y shadPS4. Parches de illusion y TroyWarez. Sin afiliación con Sony, Activision "
-                             "ni Beenox. Licencia GPL v2 o posterior.",
+    ImGui::TextUnformatted(T("نسخة Windows من SacredFire (T3CHNOLOG1C)، مبنية على bbport (deadinside28) ونسخة Windows من Supermedo و shadPS4. الباتشات من illusion و TroyWarez. اللعب الأونلاين من CTRNativePorted (guzuold). غير تابع لـ Sony أو Activision أو Beenox. رخصة GPL v2.",
                              "Windows fork of SacredFire (T3CHNOLOG1C), built on bbport (deadinside28), Supermedo's Windows "
                              "port and shadPS4. Patches by illusion and TroyWarez. Not affiliated with Sony, Activision or "
                              "Beenox. GPL v2 or later."));
     ImGui::Spacing();
-    ImGui::TextUnformatted(T("Escalado temporal: AMD FidelityFX FSR 3.1 (MIT) y NVIDIA DLSS. DLSS usa el SDK de "
-                             "NVIDIA DLSS (nvngx_dlss.dll, redistribuido según su licencia, en licenses\\) a través del "
-                             "puente de IFreemz (MIT). NVIDIA, DLSS y GeForce RTX son marcas de NVIDIA Corporation.",
+    ImGui::TextUnformatted(T("Upscaling زمني: AMD FidelityFX FSR 3.1 (MIT) و NVIDIA DLSS. يستخدم DLSS حزمة NVIDIA DLSS SDK (nvngx_dlss.dll، موزعة بموجب رخصتها، في licenses\\) عبر جسر IFreemz (MIT). NVIDIA و DLSS و GeForce RTX علامات تجارية لـ NVIDIA Corporation.",
                              "Temporal upscaling: AMD FidelityFX FSR 3.1 (MIT) and NVIDIA DLSS. DLSS uses the NVIDIA DLSS "
                              "SDK (nvngx_dlss.dll, redistributed under its license, in licenses\\) through IFreemz's "
                              "bridge (MIT). NVIDIA, DLSS and GeForce RTX are trademarks of NVIDIA Corporation."));
     ImGui::Spacing();
-    ImGui::TextUnformatted(T("FSR 3.1, la generación de cuadros FSR 3.1.6 y FSR 4 vienen de AMD FidelityFX a través de "
-                             "FireBurn/FSR-Vulkan (MIT). Ultra-panorámico de tcosi; edición europea basada en "
-                             "OCTR-NitroFueled-PC-EU de martijnhe; CPUs antiguas (MetaHeart) y dumps dañados (Naif Alqurashi).",
+    ImGui::TextUnformatted(T("FSR 3.1 وتوليد الإطارات FSR 3.1.6 و FSR 4 من AMD FidelityFX عبر FireBurn/FSR-Vulkan (MIT). UltraWide من tcosi؛ النسخة الأوروبية مبنية على OCTR-NitroFueled-PC-EU من martijnhe؛ المعالجات القديمة (MetaHeart) والنسخ التالفة (Naif Alqurashi).",
                              "FSR 3.1, FSR 3.1.6 frame generation and FSR 4 come from AMD FidelityFX through "
                              "FireBurn/FSR-Vulkan (MIT). Ultrawide by tcosi; the European edition is based on martijnhe's "
                              "OCTR-NitroFueled-PC-EU; old CPUs (MetaHeart) and damaged dumps (Naif Alqurashi)."));
@@ -3953,9 +4013,9 @@ void ToolsTab() {
         std::error_code ec;
         const bool dlss = fs::is_regular_file(a.root / L"bin" / L"sacredfire_dlss.dll", ec) &&
                           fs::is_regular_file(a.root / L"bin" / L"nvngx_dlss.dll", ec);
-        ImGui::TextColored(kGrey, "%s", dlss ? T("DLSS: archivos presentes (necesita una tarjeta NVIDIA RTX)",
+        ImGui::TextColored(kGrey, "%s", dlss ? T("DLSS: الملفات موجودة (يحتاج كرت NVIDIA RTX)",
                                                  "DLSS: files present (needs an NVIDIA RTX card)")
-                                             : T("DLSS: archivos no incluidos (se usa FSR 3)",
+                                             : T("DLSS: الملفات غير مرفقة (يُستخدم FSR 3)",
                                                  "DLSS: files not included (FSR 3 is used)"));
     }
     ImGui::TextLinkOpenURL(kRepoUrl, kRepoUrl);
@@ -3966,74 +4026,22 @@ void ClearShaderCache() {
     std::error_code ec;
     const fs::path cache = g_app.root / L"user" / L"cache" / GameTitle();
     const auto removed = fs::remove_all(cache, ec);
-    g_app.notice = ec ? std::string(T("No se pudo borrar la caché: ", "Could not clear the cache: ")) + ec.message()
-                      : std::string(T("Caché borrada (", "Cache cleared (")) + std::to_string(removed) +
-                            T(" archivos).", " files).");
+    g_app.notice = ec ? std::string(T("تعذّر مسح الذاكرة: ", "Could not clear the cache: ")) + ec.message()
+                      : std::string(T("تم مسح الذاكرة (", "Cache cleared (")) + std::to_string(removed) +
+                            T(" ملف).", " files).");
 }
 
 // ---------------------------------------------------------------------------------------------
 // v0.4 header: the icon, the title, the version and the edition of the chosen game.
 
-/// "América (USA) · CUSA13795", "Europa (PAL) · CUSA14876" or "" without a game.
+/// "Americas (USA) · CUSA13795", "Europe (PAL) · CUSA14876" or "" without a game.
 std::string EditionLabel() {
     const std::string title = GameTitleId();
     bool known = false;
     for (const FolderInfo* info : {&g_app.game_info, &g_app.update_info, &g_app.base_info}) known |= IsCtrTitle(info->title);
     if (!known) return {};
-    return std::string(title == "CUSA14876" ? T("Europa (PAL)", "Europe (PAL)") : T("América (USA)", "Americas (USA)")) +
-           " · " + title;
-}
-
-void Header() {
-    App& a = g_app;
-    const float s = g_ui_scale;
-    const ImVec2 win = ImGui::GetWindowPos();
-    const float width = ImGui::GetWindowSize().x;
-    const float height = 74.0f * s;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 left = IM_COL32(0x2A, 0x1B, 0x3E, 0xFF), right = IM_COL32(0x15, 0x19, 0x2A, 0xFF);
-    dl->AddRectFilledMultiColor(win, ImVec2(win.x + width, win.y + height), left, right, right, left);
-    dl->AddRectFilledMultiColor(ImVec2(win.x, win.y + height - 3 * s), ImVec2(win.x + width, win.y + height),
-                                IM_COL32(0xFF, 0x7A, 0x18, 0xFF), IM_COL32(0xFF, 0xD2, 0x3F, 0xFF),
-                                IM_COL32(0xFF, 0xD2, 0x3F, 0xFF), IM_COL32(0xFF, 0x7A, 0x18, 0xFF));
-    const float pad = 18.0f * s, logo = 50.0f * s;
-    float x = win.x + pad;
-    if (g_logo) {
-        const float y = win.y + (height - logo) * 0.5f;
-        dl->AddImage(ImTextureRef(ImTextureID(reinterpret_cast<intptr_t>(g_logo))), ImVec2(x, y), ImVec2(x + logo, y + logo));
-        x += logo + 14.0f * s;
-    }
-    ImFont* title_font = g_font_title ? g_font_title : ImGui::GetFont();
-    const float title_size = 30.0f * s;
-    dl->AddText(title_font, title_size, ImVec2(x, win.y + 10.0f * s), IM_COL32(0xFF, 0xFF, 0xFF, 0xFF), "CTR Nitro-Fueled PC");
-    std::string version = a.version;
-    if (const auto dash = version.find("-windows"); dash != std::string::npos) version.erase(dash);
-    const std::string subtitle =
-        std::string(T("Port nativo para Windows", "Native Windows port")) + (version.empty() ? "" : "  ·  " + version);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.92f, ImVec2(x + 2 * s, win.y + 10.0f * s + title_size + 2 * s),
-                Col(kGrey), subtitle.c_str());
-
-    // Right: the game's state and edition.
-    std::vector<std::pair<std::string, ImVec4>> pills;
-    const std::string edition = EditionLabel();
-    if (a.game_running) pills.emplace_back(std::string(ICON_PLAY "  ") + T("En juego", "Playing"), kGreen);
-    else if (a.game_info.kind == Kind::Complete && a.game_checked && a.game_ok)
-        pills.emplace_back(std::string(ICON_CHECK "  ") + T("Listo para jugar", "Ready to play"), kGreen);
-    else pills.emplace_back(std::string(ICON_WARN "  ") + T("Falta preparar el juego", "Game not set up"), kYellow);
-    if (!edition.empty()) pills.emplace_back(std::string(ICON_GLOBE "  ") + edition, kBlue);
-    float rx = win.x + width - pad;
-    const ImVec2 pp(8.0f * s, 4.0f * s);
-    const float line = ImGui::GetTextLineHeight();
-    for (const auto& [text, color] : pills) {
-        const ImVec2 t = ImGui::CalcTextSize(text.c_str());
-        const ImVec2 a0(rx - t.x - pp.x * 2, win.y + (height - line - pp.y * 2) * 0.5f);
-        const ImVec2 a1(rx, a0.y + line + pp.y * 2);
-        dl->AddRectFilled(a0, a1, Col(color, 0.16f), 99.0f);
-        dl->AddRect(a0, a1, Col(color, 0.8f), 99.0f, 0, 1.0f * s);
-        dl->AddText(ImVec2(a0.x + pp.x, a0.y + pp.y), Col(color), text.c_str());
-        rx = a0.x - 8.0f * s;
-    }
-    ImGui::SetCursorScreenPos(ImVec2(win.x + ImGui::GetStyle().WindowPadding.x, win.y + height + 10.0f * s));
+    return std::string(title == "CUSA14876" ? T("أوروبا (PAL)", "Europe (PAL)") : T("الأمريكتان (USA)", "Americas (USA)")) +
+           (g_arabic ? "‏ · ‏" : " · ") + title;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -4051,9 +4059,9 @@ void PlaySummary() {
         const std::string t = GameTemporal();
         if (t == "fsr1") return "AMD FSR 1";
         if (t == "fsr3") return "AMD FSR 3";
-        if (t == "fsr4") return T("AMD FSR 4 (experimental)", "AMD FSR 4 (experimental)");
+        if (t == "fsr4") return T("AMD FSR 4 (تجريبي)", "AMD FSR 4 (experimental)");
         if (t == "dlss") return "NVIDIA DLSS";
-        return T("Desactivado", "Off");
+        return T("معطّل", "Off");
     };
     auto language = [&]() -> std::string {
         const std::string v = GameLanguage();
@@ -4071,16 +4079,16 @@ void PlaySummary() {
     const std::string aspect = GameAspect();
     const std::string output = a.game.Get("output_res");
     const std::pair<std::string, std::string> rows[] = {
-        {T("Resolución interna", "Internal resolution"),
+        {T("الدقة الداخلية", "Internal resolution"),
          GameAspect() != "16:9" && std::atoi(EffectiveRenderRes().c_str()) > 1440
-             ? std::string(T("1440p (el máximo con ultra-panorámico)", "1440p (the most with ultrawide)"))
+             ? std::string(T("1440p (الأقصى مع UltraWide)", "1440p (the most with ultrawide)"))
              : res()},
-        {T("Escalado", "Upscaling"), GameAspect() != "16:9" ? T("(apagado con ultra-panorámico)", "(off with ultrawide)") : upscaler()},
-        {T("Generación de cuadros", "Frame generation"),
-         framegen == "fsr3" || framegen == "fsr" ? "AMD FSR 3" : T("Desactivada", "Off")},
-        {T("Aspecto / salida", "Aspect / output"), aspect + (output.empty() ? "" : "  ·  " + output)},
-        {T("Límite de FPS", "FPS limit"), fps == 0 ? T("Sin límite", "No limit") : std::to_string(fps) + " FPS"},
-        {T("Idioma del juego", "Game language"), language()},
+        {T("رفع الدقة (Upscaling)", "Upscaling"), GameAspect() != "16:9" ? T("(معطّل مع UltraWide)", "(off with ultrawide)") : upscaler()},
+        {T("توليد الإطارات (Frame generation)", "Frame generation"),
+         framegen == "fsr3" || framegen == "fsr" ? "AMD FSR 3" : T("معطّل", "Off")},
+        {T("نسبة العرض / المخرج", "Aspect / output"), aspect + (output.empty() ? "" : Sep() + output)},
+        {T("حد FPS", "FPS limit"), fps == 0 ? T("بلا حد", "No limit") : std::to_string(fps) + " FPS"},
+        {T("لغة اللعبة", "Game language"), language()},
     };
     if (ImGui::BeginTable("summary", 2, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
@@ -4094,94 +4102,773 @@ void PlaySummary() {
         }
         ImGui::EndTable();
     }
-    if (ImGui::Button((std::string(ICON_SETTINGS "  ") + T("Cambiar ajustes", "Change settings")).c_str())) g_goto_tab = "settings";
+    if (ImGui::Button((std::string(ICON_SETTINGS "  ") + T("تغيير الإعدادات", "Change settings")).c_str())) g_goto_tab = "settings";
     ImGui::SameLine();
-    if (ImGui::Button((std::string(ICON_GAMEPAD "  ") + T("Mandos y teclado", "Controllers and keyboard")).c_str()))
+    if (ImGui::Button((std::string(ICON_GAMEPAD "  ") + T("أيادي التحكم ولوحة المفاتيح", "Controllers and keyboard")).c_str()))
         g_goto_tab = "controls";
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Nitro look (after CTRNativePorted's "Nitro Cinema" launcher): a borderless 1280 x 720
+// window, horizontal tabs in the header, the Home page over the game's artwork with the big
+// Play button, a footer with the start settings and a friends drawer on the right.
+
+enum Page { kHome, kSettings, kControls, kTrophies, kPatches, kSaves, kAdvanced, kPageCount };
+int g_page = kHome;
+bool g_autoplay = false;                       // --play: start the game once it is ready (shortcuts)
+float g_nav_x = -1.0f, g_nav_w = 0.0f;       // the animated underline under the selected tab
+float g_drawer = 0.0f;                        // the friends drawer: 0 closed, 1 open (animated)
+bool g_drawer_open = false;
+int g_saves_part = 0;                          // Saves page: 0 saves, 1 DLC
+ID3D11ShaderResourceView* g_art = nullptr;     // Home background (assets\launcher\background.jpg)
+int g_art_w = 0, g_art_h = 0;
+ID3D11ShaderResourceView* g_brand = nullptr;   // header logo (assets\launcher\logo.png)
+int g_brand_w = 0, g_brand_h = 0;
+std::vector<ImRect> g_hot;                     // header areas that are buttons (the rest drags)
+float g_header_px = 65.0f;                     // header height in pixels (WM_NCHITTEST)
+
+// Online (online.h): Multiplayer Online, the player name and the friends drawer.
+std::vector<launcher_online::Friend> g_friends;
+ULONGLONG g_friends_at = 0;
+int g_friend_selected = -1;
+char g_friend_code[192] = {};
+char g_player_name[24] = {};
+std::string g_friends_notice;
+bool g_friends_notice_error = false;
+
+bool OnlineOn() { return g_app.launcher.Flag("online", false); }
+std::string PlayerName() {
+    const std::string name = g_app.launcher.Get("online_id", "CTRPlayer");
+    return launcher_online::ValidPlayerName(name) ? name : "CTRPlayer";
+}
+
+/// Known messages of online.cpp in the launcher's language.
+std::string OnlineText(const std::string& english) {
+    struct { const char* en; const char* ar; } static const kTexts[] = {
+        {"Invalid friend code.", "كود الصديق غير صحيح."},
+        {"This is your own code.", "هذا كودك أنت."},
+        {"Wait for Online to connect.", "انتظر حتى يتصل الأونلاين."},
+        {"This PC's online service could not be verified.", "تعذّر التحقق من خدمة الأونلاين في هذا الجهاز."},
+        {"server ports are busy (is another online server already running?)",
+         "منافذ الخدمة مشغولة (هل يعمل مشغل أونلاين آخر مثل CTRNativePorted؟)"},
+        {"Not connected.", "غير متصل."},
+    };
+    if (!g_arabic) return english;
+    for (const auto& t : kTexts)
+        if (english == t.en) return t.ar;
+    return english;
+}
+
+void RefreshFriends(bool now = false) {
+    const ULONGLONG t = GetTickCount64();
+    if (!now && t - g_friends_at < 1500) return;
+    g_friends_at = t;
+    const std::string selected =
+        g_friend_selected >= 0 && g_friend_selected < int(g_friends.size()) ? g_friends[size_t(g_friend_selected)].code : "";
+    g_friends = launcher_online::Friends(g_app.root);
+    g_friend_selected = -1;
+    for (int i = 0; i < int(g_friends.size()); ++i)
+        if (g_friends[size_t(i)].code == selected) g_friend_selected = i;
+}
+
+bool CopyToClipboard(const std::string& text) {
+    const std::wstring w = Widen(text);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t));
+    if (!memory) return false;
+    std::memcpy(GlobalLock(memory), w.c_str(), (w.size() + 1) * sizeof(wchar_t));
+    GlobalUnlock(memory);
+    if (!OpenClipboard(g_app.hwnd)) {
+        GlobalFree(memory);
+        return false;
+    }
+    const bool ok = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, memory);
+    CloseClipboard();
+    if (!ok) GlobalFree(memory);
+    return ok;
+}
+
+/// Text rotated a quarter turn counter-clockwise around its centre (the drawer's tab).
+void AddTextVertical(ImDrawList* dl, ImFont* font, float size, ImVec2 center, ImU32 color, const char* text) {
+    const ImVec2 t = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    const int first = dl->VtxBuffer.Size;
+    dl->AddText(font, size, ImVec2(center.x - t.x * 0.5f, center.y - t.y * 0.5f), color, text);
+    for (int i = first; i < dl->VtxBuffer.Size; ++i) {
+        ImVec2& p = dl->VtxBuffer[i].pos;
+        const ImVec2 d(p.x - center.x, p.y - center.y);
+        p = ImVec2(center.x + d.y, center.y - d.x);
+    }
+}
+
+ImVec2 Px(float x, float y) {
+    const ImVec2 o = ImGui::GetMainViewport()->Pos;
+    return ImVec2(o.x + x * g_ui_scale, o.y + y * g_ui_scale);
+}
+
+/// A flat button drawn on the window's draw list (header, footer, Home); true when clicked.
+bool HotArea(const char* id, ImVec2 a, ImVec2 b, bool* hovered = nullptr) {
+    ImGui::SetCursorScreenPos(a);
+    ImGui::PushID(id);
+    const bool clicked = ImGui::InvisibleButton("hot", ImVec2(b.x - a.x, b.y - a.y));
+    ImGui::PopID();
+    if (hovered) *hovered = ImGui::IsItemHovered();
+    if (a.y < Px(0, 65).y) g_hot.emplace_back(a, b);
+    return clicked;
+}
+
+const char* PageName(int page) {
+    switch (page) {
+    case kHome: return T("الرئيسية", "HOME");
+    case kSettings: return T("الإعدادات", "SETTINGS");
+    case kControls: return T("التحكم", "CONTROLS");
+    case kTrophies: return T("الكؤوس", "TROPHIES");
+    case kPatches: return T("الباتشات", "PATCHES");
+    case kSaves: return T("الحفظ", "SAVES");
+    case kAdvanced: return T("متقدم", "ADVANCED");
+    }
+    return "";
+}
+
+void GoTo(const char* id) {
+    if (!std::strcmp(id, "friends")) g_drawer_open = true;
+    static const std::pair<const char*, int> kIds[] = {{"play", kHome}, {"home", kHome}, {"settings", kSettings},
+        {"controls", kControls}, {"achievements", kTrophies}, {"trophies", kTrophies}, {"patches", kPatches},
+        {"saves", kSaves}, {"dlc", kSaves}, {"tools", kAdvanced}, {"advanced", kAdvanced}};
+    for (const auto& [name, page] : kIds)
+        if (!std::strcmp(id, name)) {
+            g_page = page;
+            if (!std::strcmp(id, "dlc")) g_saves_part = 1;
+            if (!std::strcmp(id, "saves")) g_saves_part = 0;
+        }
+}
+
+void Header() {
+    App& a = g_app;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float s = g_ui_scale;
+    g_header_px = 65.0f * s;
+    dl->AddRectFilled(Px(0, 0), Px(1280, 65), IM_COL32(0x0E, 0x12, 0x33, 0xFF));
+    dl->AddLine(Px(0, 65), Px(1280, 65), IM_COL32(0x22, 0x2A, 0x5C, 0xFF), 1.0f * s);
+    // The logo, a little over the header's edge as on the Nitro Cinema launcher.
+    if (g_brand && g_brand_h) {
+        const float h = 74.0f, w = h * float(g_brand_w) / float(g_brand_h);
+        dl->AddImage(ImTextureRef(ImTextureID(reinterpret_cast<intptr_t>(g_brand))), Px(30, 3), Px(30 + w, 3 + h));
+    } else if (g_logo) {
+        dl->AddImage(ImTextureRef(ImTextureID(reinterpret_cast<intptr_t>(g_logo))), Px(34, 8), Px(84, 58));
+    }
+    // Tabs: the display font, the selected one in yellow over an animated underline.
+    ImFont* font = DisplayFont();
+    float size = 25.0f * s;
+    const float left = 262.0f, right = 948.0f, gap = 22.0f;
+    float total = 0;
+    for (int p = 0; p < kPageCount; ++p) total += font->CalcTextSizeA(size, FLT_MAX, 0, PageName(p)).x / s;
+    total += gap * (kPageCount - 1);
+    if (total > right - left) {
+        size *= (right - left - gap * (kPageCount - 1)) / (total - gap * (kPageCount - 1));
+        total = right - left;
+    }
+    float x = left + (right - left - total) * 0.5f;
+    for (int i = 0; i < kPageCount; ++i) {
+        const int p = g_arabic ? kPageCount - 1 - i : i;  // Arabic reads from the right: Home first there
+        const float w = font->CalcTextSizeA(size, FLT_MAX, 0, PageName(p)).x / s;
+        bool hovered = false;
+        if (HotArea(PageName(p), Px(x - 6, 8), Px(x + w + 6, 58), &hovered) && g_page != p) {
+            g_page = p;
+            g_drawer_open = false;
+        }
+        const ImU32 color = p == g_page ? Col(kYellow) : hovered ? IM_COL32(0xFF, 0xFF, 0xFF, 0xFF) : IM_COL32(0xEE, 0xF0, 0xFF, 0xE6);
+        dl->AddText(font, size, Px(x, 31 - size / s * 0.5f), color, PageName(p));
+        if (p == g_page) {
+            const float io_dt = std::min(ImGui::GetIO().DeltaTime * 14.0f, 1.0f);
+            if (g_nav_x < 0) g_nav_x = x, g_nav_w = w;
+            g_nav_x += (x - g_nav_x) * io_dt;
+            g_nav_w += (w - g_nav_w) * io_dt;
+        }
+        x += w + gap;
+    }
+    const float uw = std::min(g_nav_w * 0.62f, 66.0f), ux = g_nav_x + (g_nav_w - uw) * 0.5f;
+    dl->AddRectFilled(Px(ux, 51), Px(ux + uw, 56), Col(kYellow), 3.0f * s);
+    // Friends, minimize and close.
+    dl->AddLine(Px(962, 16), Px(962, 49), IM_COL32(0x2A, 0x33, 0x66, 0xFF), 1.0f * s);
+    bool hot = false;
+    if (HotArea("friends", Px(1004, 14), Px(1134, 49), &hot)) g_drawer_open = !g_drawer_open;
+    dl->AddRectFilled(Px(1004, 14), Px(1134, 49), hot ? IM_COL32(0xFF, 0x5C, 0xA4, 0xFF) : Col(kPink), 7.0f * s);
+    dl->AddText(ImGui::GetFont(), 19.0f * s, Px(1016, 22), IM_COL32(0x10, 0x10, 0x2A, 0xFF), ICON_PEOPLE);
+    const char* friends = T("الأصدقاء", "FRIENDS");
+    const float fw = font->CalcTextSizeA(19.0f * s, FLT_MAX, 0, friends).x / s;
+    dl->AddText(font, 19.0f * s, Px(1043 + (86 - fw) * 0.5f, 22), IM_COL32(0x10, 0x10, 0x2A, 0xFF), friends);
+    const auto st = launcher_online::GetStatus();
+    if (OnlineOn()) {
+        const ImU32 dot = st.running ? Col(kGreen) : st.busy ? Col(kYellow) : Col(kRed);
+        dl->AddCircleFilled(Px(1131, 17), 5.0f * s, dot);
+        dl->AddCircle(Px(1131, 17), 5.0f * s, IM_COL32(0x0E, 0x12, 0x33, 0xFF), 0, 2.0f * s);
+    }
+    dl->AddLine(Px(1152, 16), Px(1152, 49), IM_COL32(0x2A, 0x33, 0x66, 0xFF), 1.0f * s);
+    if (HotArea("min", Px(1172, 14), Px(1207, 49), &hot)) ShowWindow(a.hwnd, SW_MINIMIZE);
+    dl->AddRectFilled(Px(1172, 14), Px(1207, 49), hot ? IM_COL32(0x6B, 0xE0, 0xFF, 0xFF) : Col(kBlue), 7.0f * s);
+    dl->AddRectFilled(Px(1183, 31), Px(1196, 33), IM_COL32(0x10, 0x10, 0x2A, 0xFF));
+    if (HotArea("close", Px(1222, 14), Px(1257, 49), &hot)) PostMessageW(a.hwnd, WM_CLOSE, 0, 0);
+    dl->AddRectFilled(Px(1222, 14), Px(1257, 49), hot ? IM_COL32(0xFF, 0x5C, 0xA4, 0xFF) : Col(kPink), 7.0f * s);
+    dl->AddLine(Px(1234, 26), Px(1245, 37), IM_COL32(0x10, 0x10, 0x2A, 0xFF), 2.0f * s);
+    dl->AddLine(Px(1245, 26), Px(1234, 37), IM_COL32(0x10, 0x10, 0x2A, 0xFF), 2.0f * s);
+}
+
+/// The page background: the artwork on Home, a dark navy sheen elsewhere.
+void Backdrop() {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 a = Px(0, 65), b = Px(1280, 720);
+    if (g_page == kHome && g_art) {
+        // Cover crop, anchored low (the characters), as nitro_layout.hpp does.
+        const float dw = b.x - a.x, dh = b.y - a.y;
+        const float scale = std::max(dw / float(g_art_w), dh / float(g_art_h));
+        const float w = dw / scale / float(g_art_w), h = dh / scale / float(g_art_h);
+        const ImVec2 uv0((1.0f - w) * 0.5f, (1.0f - h) * 0.6f);
+        dl->AddImage(ImTextureRef(ImTextureID(reinterpret_cast<intptr_t>(g_art))), a, b, uv0, ImVec2(uv0.x + w, uv0.y + h));
+        // A soft shade low-left behind the status line and the Play button.
+        dl->AddRectFilledMultiColor(Px(0, 380), Px(720, 720), IM_COL32(8, 10, 34, 0), IM_COL32(8, 10, 34, 0),
+                                    IM_COL32(8, 10, 34, 0), IM_COL32(8, 10, 34, 150));
+        dl->AddRectFilledMultiColor(Px(0, 65), Px(1280, 90), IM_COL32(8, 10, 34, 110), IM_COL32(8, 10, 34, 110),
+                                    IM_COL32(8, 10, 34, 0), IM_COL32(8, 10, 34, 0));
+    } else {
+        dl->AddRectFilledMultiColor(a, b, IM_COL32(0x10, 0x14, 0x3A, 0xFF), IM_COL32(0x0E, 0x22, 0x4E, 0xFF),
+                                    IM_COL32(0x0B, 0x16, 0x3A, 0xFF), IM_COL32(0x09, 0x0C, 0x26, 0xFF));
+        for (int i = 0; i < 6; ++i) {  // faint diagonal light, as on the Nitro pages
+            const float x0 = 250.0f + i * 170.0f;
+            dl->AddQuadFilled(Px(x0, 65), Px(x0 + 60, 65), Px(x0 - 300, 720), Px(x0 - 360, 720), IM_COL32(255, 255, 255, 4));
+        }
+    }
+}
+
+std::string FooterSummary() {
+    const int fps = g_app.game.Int("fps_limit", 60);
+    std::string text = std::string(T("الإعدادات", "Configuration")) + Sep() + g_app.game.Get("output_res", "1920x1080") + Sep();
+    text += fps == 0 ? T("بلا حد FPS", "No FPS limit") : std::string(T("حد ", "Limit ")) + std::to_string(fps) + " FPS";
+    const std::string t = GameTemporal();
+    if (GameAspect() == "16:9" && t != "off")
+        text += Sep() + std::string(t == "dlss" ? "DLSS" : t == "fsr1" ? "FSR 1" : t == "fsr3" ? "FSR 3" : "FSR 4");
+    if (OnlineOn()) text += Sep() + std::string(T("أونلاين", "Online")) + " (" + PlayerName() + ")";
+    return text;
+}
+
+void Footer() {
+    App& a = g_app;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float s = g_ui_scale;
+    dl->AddRectFilled(Px(10, 664), Px(1270, 709), IM_COL32(0x0B, 0x0F, 0x2C, 0xF2), 10.0f * s);
+    dl->AddRect(Px(10, 664), Px(1270, 709), IM_COL32(0x23, 0x2C, 0x5C, 0xFF), 10.0f * s, 0, 1.0f * s);
+    bool hot = false;
+    if (HotArea("footer_settings", Px(20, 668), Px(640, 705), &hot)) g_page = kSettings;
+    dl->AddText(ImGui::GetFont(), 21.0f * s, Px(28, 675), hot ? Col(kYellow) : IM_COL32(255, 255, 255, 255), ICON_SETTINGS);
+    dl->AddText(ImGui::GetFont(), 16.0f * s, Px(60, 676), IM_COL32(255, 255, 255, 235), FooterSummary().c_str());
+    // Right: the edition, the launcher and the game version.
+    ImFont* it = g_font_italic ? g_font_italic : ImGui::GetFont();
+    std::string version = a.version;
+    if (const auto dash = version.find("-windows"); dash != std::string::npos) version.erase(dash);
+    const std::string items[] = {EditionLabel(), std::string("Launcher ") + (version.empty() ? "?" : version),
+                                 std::string(T("اللعبة ", "Game ")) + kUpdateVersion};
+    float rx = 1250.0f;
+    for (int i = 2; i >= 0; --i) {
+        if (items[i].empty()) continue;
+        const float w = it->CalcTextSizeA(15.0f * s, FLT_MAX, 0, items[i].c_str()).x / s;
+        rx -= w;
+        dl->AddText(it, 15.0f * s, Px(rx, 678), IM_COL32(0xE8, 0xEB, 0xFF, 0xFF), items[i].c_str());
+        rx -= 18.0f;
+        if (i) dl->AddLine(Px(rx, 674), Px(rx, 699), IM_COL32(0x2A, 0x33, 0x66, 0xFF), 1.0f * s);
+        rx -= 18.0f;
+    }
+}
+
+/// The big slanted Play button of the Nitro look (yellow; red while the game runs).
+bool PlayButton(const char* label, bool enabled, bool stop) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float s = g_ui_scale;
+    bool hot = false;
+    const bool clicked = HotArea("play_button", Px(48, 522), Px(468, 614), &hot) && enabled;
+    hot = hot && enabled;
+    const float k = 14.0f;  // slant
+    auto quad = [&](float x0, float y0, float x1, float y1, ImU32 c) {
+        dl->AddQuadFilled(Px(x0 + k, y0), Px(x1 + k * 0.4f, y0), Px(x1 - k, y1), Px(x0 - k * 0.4f, y1), c);
+    };
+    quad(52, 528, 470, 620, IM_COL32(0x06, 0x08, 0x1E, 0xC8));  // shadow
+    const ImVec4 top = stop ? ImVec4(1.0f, 0.42f, 0.42f, 1) : enabled ? ImVec4(1.0f, 0.90f, 0.40f, 1) : ImVec4(0.55f, 0.55f, 0.55f, 1);
+    const ImVec4 bottom = stop ? ImVec4(0.82f, 0.16f, 0.22f, 1) : enabled ? ImVec4(0.98f, 0.76f, 0.10f, 1) : ImVec4(0.40f, 0.40f, 0.42f, 1);
+    const float lift = hot ? -2.0f : 0.0f;
+    quad(48, 522 + lift, 466, 612 + lift, IM_COL32(0x0E, 0x12, 0x33, 0xFF));  // outline
+    const ImVec2 p0 = Px(54 + k, 527 + lift), p1 = Px(460 + k * 0.4f, 527 + lift), p2 = Px(460 - k, 607 + lift),
+                 p3 = Px(54 - k * 0.4f, 607 + lift);
+    const int first = dl->VtxBuffer.Size;
+    dl->AddQuadFilled(p0, p1, p2, p3, IM_COL32_WHITE);
+    for (int i = first; i < dl->VtxBuffer.Size; ++i) {  // vertical gradient
+        const float t = (dl->VtxBuffer[i].pos.y - p0.y) / (p3.y - p0.y);
+        const ImVec4 c(top.x + (bottom.x - top.x) * t, top.y + (bottom.y - top.y) * t, top.z + (bottom.z - top.z) * t, 1.0f);
+        dl->VtxBuffer[i].col = ImGui::GetColorU32(hot ? ImVec4(std::min(c.x * 1.05f, 1.0f), std::min(c.y * 1.05f, 1.0f), c.z, 1) : c);
+    }
+    dl->AddRectFilled(Px(62, 530 + lift), Px(452, 536 + lift), IM_COL32(255, 255, 255, 70), 3.0f * s);  // shine
+    for (int r = 0; r < 4; ++r)  // the chequered flag at the end
+        for (int c = 0; c < 4; ++c)
+            if ((r + c) % 2 == 0) {
+                const float x0 = 392 + c * 15 - r * 2.5f, y0 = 535 + r * 17 + lift;
+                dl->AddRectFilled(Px(x0, y0), Px(x0 + 15, y0 + 17), IM_COL32(255, 255, 255, 34));
+            }
+    ImFont* font = DisplayFont();
+    const float size = 58.0f * s;
+    const ImVec2 t = font->CalcTextSizeA(size, FLT_MAX, 0, label);
+    const float cx = 270.0f * s + ImGui::GetMainViewport()->Pos.x, cy = Px(0, 568 + lift).y;
+    const ImU32 ink = IM_COL32(0x10, 0x14, 0x2E, 0xFF);
+    const float tri = 30.0f * s, tx = cx - t.x * 0.5f - tri - 8.0f * s;
+    if (!stop) dl->AddTriangleFilled(ImVec2(tx, cy - tri * 0.55f), ImVec2(tx + tri * 0.9f, cy), ImVec2(tx, cy + tri * 0.55f), ink);
+    else dl->AddRectFilled(ImVec2(tx, cy - tri * 0.45f), ImVec2(tx + tri * 0.9f, cy + tri * 0.45f), ink, 3.0f * s);
+    dl->AddText(font, size, ImVec2(cx - t.x * 0.5f + tri * 0.5f, cy - t.y * 0.5f + 3.0f * s), ink, label);
+    return clicked;
+}
+
+void HomePage() {
+    App& a = g_app;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float s = g_ui_scale;
+    const bool busy = a.job != Job::None;
+    const bool ready = a.game_info.kind == Kind::Complete && a.game_checked && a.game_ok;
+    const auto online = launcher_online::GetStatus();
+    // The status line over the button, and the line under it.
+    std::string status, under;
+    ImVec4 color = kBlue;
+    if (a.game_running) {
+        status = T("في السباق", "Racing");
+        under = T("اللعبة تعمل. أول تشغيل يبني الـ Shaders ويأخذ بعض الوقت.",
+                  "The game is running. The first start compiles shaders and takes a while.");
+    } else if (a.job == Job::Merge) {
+        status = T("جارٍ تجهيز اللعبة...", "Preparing the game...");
+        color = kYellow;
+        char text[64];
+        std::snprintf(text, sizeof text, "%zu / %zu", size_t(a.merge_done), size_t(a.merge_total));
+        under = text;
+    } else if (!a.python) {
+        status = T("Python غير موجود", "Python is missing");
+        color = kOrange;
+        under = T("لا يوجد python\\python.exe بجانب المشغل.", "No python\\python.exe next to the launcher.");
+    } else if (!ready) {
+        status = a.game_info.kind == Kind::Complete && !a.game_checked ? T("جارٍ فحص اللعبة...", "Checking the game...")
+                                                                       : T("جهّز مجلد اللعبة", "Set up the game folder");
+        color = a.game_info.kind == Kind::Complete && !a.game_checked ? kYellow : kOrange;
+        under = T("افتح متقدم لاختيار نسختك (اللعبة الأساسية + تحديث 1.21).",
+                  "Open ADVANCED to choose your dump (base game + 1.21 update).");
+    } else if (OnlineOn() && !online.running) {
+        status = online.busy ? T("جارٍ الاتصال أونلاين...", "Connecting online...") : T("الأونلاين غير متصل", "Online not connected");
+        color = online.busy ? kYellow : kOrange;
+        under = online.busy ? T("جارٍ تشغيل خدمة الأونلاين وفتح الراوتر (UPnP)...", "Opening your online service and the router (UPnP)...")
+                            : OnlineText(online.error);
+    } else {
+        status = T("جاهز للعب", "Ready to play");
+        under = OnlineOn() ? std::string(T("أونلاين باسم ", "Online as ")) + PlayerName() + Sep() +
+                                 T("ادعُ أصدقاءك أو انضم إليهم من داخل اللعبة", "invite or join your friends from the game")
+                           : std::string(T("بدون اتصال", "Offline")) + Sep() + PathText(a.game_dir);
+    }
+    if (a.show_exit && !a.game_running) {
+        if (a.exit_code != 0 && !a.stopped) {
+            char text[160];
+            std::snprintf(text, sizeof text, T("أُغلقت اللعبة بخطأ (الرمز %lu). راجع السجل في متقدم.",
+                                               "The game ended with an error (code %lu). See the log in ADVANCED."),
+                          (unsigned long)a.exit_code);
+            under = text;
+        }
+    }
+    ImFont* it = g_font_italic ? g_font_italic : ImGui::GetFont();
+    dl->AddText(it, 26.0f * s, Px(76, 482), IM_COL32(0x06, 0x08, 0x1E, 0xB0), status.c_str());
+    dl->AddText(it, 26.0f * s, Px(74, 480), Col(color), status.c_str());
+    const bool can_play = ready && !busy && a.python && (!OnlineOn() || online.running);
+    if (g_autoplay && can_play && !a.game_running) {
+        g_autoplay = false;
+        StartGame();
+    }
+    if (a.game_running) {
+        if (PlayButton(T("إيقاف", "STOP"), true, true)) StopGame();
+    } else if (PlayButton(T("العب", "PLAY"), can_play, false)) {
+        StartGame();
+    }
+    if (!ready && !a.game_running && a.job != Job::Merge) {
+        bool hot = false;
+        if (HotArea("goto_advanced", Px(48, 626), Px(660, 648), &hot)) g_page = kAdvanced;
+        dl->AddText(ImGui::GetFont(), 15.0f * s, Px(50, 628), hot ? Col(kYellow) : IM_COL32(0xD8, 0xDE, 0xFF, 0xFF), under.c_str());
+    } else {
+        dl->AddText(ImGui::GetFont(), 15.0f * s, Px(51, 629), IM_COL32(0x06, 0x08, 0x1E, 0xB0), under.c_str());
+        dl->AddText(ImGui::GetFont(), 15.0f * s, Px(50, 628), IM_COL32(0xE4, 0xE8, 0xFF, 0xFF), under.c_str());
+    }
+}
+
+/// A page with its big yellow title; the body is a scrolling area.
+void PageTitle(const char* title) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddText(DisplayFont(), 46.0f * g_ui_scale, Px(42, 106), IM_COL32(0x06, 0x08, 0x1E, 0x90), title);
+    dl->AddText(DisplayFont(), 46.0f * g_ui_scale, Px(40, 104), Col(kYellow), title);
+}
+
+/// Segmented choice of the Nitro look (the Mods page's FILE MODS | PATCHES): true on change.
+bool Pills(const char* id, const char* const* labels, int count, int* current, float width) {
+    bool changed = false;
+    ImGui::PushID(id);
+    for (int i = 0; i < count; ++i) {
+        if (i) ImGui::SameLine(0, 12.0f * g_ui_scale);
+        const bool on = *current == i;
+        ImGui::PushStyleColor(ImGuiCol_Button, on ? kYellow : kFrame);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? kAccentHover : kFrameHover);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, on ? kAccentActive : kFrameActive);
+        ImGui::PushStyleColor(ImGuiCol_Text, on ? ImVec4(0.06f, 0.08f, 0.18f, 1) : kText);
+        ImGui::PushStyleColor(ImGuiCol_Border, on ? kYellow : kBorder);
+        if (ImGui::Button(labels[i], ImVec2(width * g_ui_scale, 30.0f * g_ui_scale)) && !on) {
+            *current = i;
+            changed = true;
+        }
+        ImGui::PopStyleColor(5);
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+/// The Online & Multi card: Multiplayer Online, the player name and the Pit Stop option.
+void OnlineSettings() {
+    App& a = g_app;
+    const auto st = launcher_online::GetStatus();
+    ImGui::TextColored(kGrey, "%s", T("وضع الشبكة:", "Network mode:"));
+    bool on = OnlineOn();
+    ImGui::BeginDisabled(a.game_running || st.busy);
+    if (ToggleSwitch(T("اللعب الأونلاين (Multiplayer Online)", "Multiplayer Online"), &on)) {
+        a.launcher.Set("online", on ? "1" : "0");
+        SaveLauncher();
+        if (on) launcher_online::Start(a.root, PlayerName());
+        else launcher_online::Stop();
+    }
+    ImGui::EndDisabled();
+    if (on) {
+        if (st.busy) ImGui::TextColored(kYellow, "%s", T("جارٍ الاتصال...", "Connecting..."));
+        else if (st.running) {
+            ImGui::TextColored(kGreen, "%s  %s", ICON_CHECK, T("أونلاين: خدمتك تعمل", "Online: your service is running"));
+            ImGui::TextColored(kGrey, "%s", st.upnp_router ? T("الراوتر: تم فتح المنافذ عبر UPnP", "Router: ports opened with UPnP")
+                                                           : T("الراوتر بدون UPnP: قد لا يصل إليك الـ Matchmaking العام",
+                                                               "Router without UPnP: public matchmaking may not reach you"));
+        } else {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(kRed, "%s", OnlineText(st.error.empty() ? "Not connected." : st.error).c_str());
+            ImGui::PopTextWrapPos();
+            if (ImGui::SmallButton(T("إعادة المحاولة", "Retry"))) launcher_online::Start(a.root, PlayerName());
+        }
+    }
+    ImGui::Spacing();
+    ImGui::TextColored(kGrey, "%s", T("اسم اللاعب:", "Player name:"));
+    if (!g_player_name[0]) std::snprintf(g_player_name, sizeof g_player_name, "%s", a.launcher.Get("online_id", "CTRPlayer").c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::BeginDisabled(a.game_running);
+    ImGui::InputText("##player_name", g_player_name, 17, ImGuiInputTextFlags_CallbackCharFilter,
+                     [](ImGuiInputTextCallbackData* d) -> int {
+                         const ImWchar c = d->EventChar;
+                         return (c < 128 && (std::isalnum(int(c)) || c == '_' || c == '-')) ? 0 : 1;
+                     });
+    ImGui::EndDisabled();
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (launcher_online::ValidPlayerName(g_player_name)) {
+            const bool changed = a.launcher.Get("online_id") != g_player_name;
+            a.launcher.Set("online_id", g_player_name);
+            SaveLauncher();
+            if (changed && OnlineOn() && st.running) launcher_online::Restart(a.root, PlayerName());
+        }
+    }
+    if (!launcher_online::ValidPlayerName(g_player_name))
+        ImGui::TextColored(kRed, "%s", T("من 3 إلى 16 حرفاً إنجليزياً أو رقماً أو - أو _", "3-16 letters, digits, - or _"));
+    ImGui::Spacing();
+    LauncherFlag("wumpa_x100", T("عملات Wumpa ×100", "Wumpa Coins x100"), false,
+                 T("يضاعف عملات Wumpa التي تكسبها أونلاين 100 مرة (متجر Pit Stop يعمل على خدمتك المحلية). الأسعار لا تتغير.",
+                   "Multiplies by 100 the Wumpa Coins you earn online (the Pit Stop runs on your local service). Prices "
+                   "do not change."));
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(kGrey, "%s", T("بدون سيرفر مركزي: أضف أصدقاءك بالكود من زر الأصدقاء (في الأعلى). متوافق مع CTRNativePorted (نفس الأكواد والـ Matchmaking).",
+                                      "No central server: add friends by code under FRIENDS (top). Works with CTRNativePorted "
+                                      "(same codes and matchmaking)."));
+    ImGui::PopTextWrapPos();
+}
+
+/// The friends drawer: this PC's code, the friends with their presence, add and remove.
+void FriendsDrawer() {
+    App& a = g_app;
+    const float s = g_ui_scale;
+    const float dt = std::min(ImGui::GetIO().DeltaTime * 7.0f, 1.0f);
+    g_drawer += ((g_drawer_open ? 1.0f : 0.0f) - g_drawer) * dt;
+    if (std::fabs(g_drawer - (g_drawer_open ? 1.0f : 0.0f)) < 0.002f) g_drawer = g_drawer_open ? 1.0f : 0.0f;
+    if (g_drawer <= 0.0f) return;
+    RefreshFriends();
+    const float ease = g_drawer * g_drawer * (3.0f - 2.0f * g_drawer);
+    const float x = 1280.0f - 345.0f * ease;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    // The pink tab with "FRIENDS" written upwards.
+    fg->AddRectFilled(Px(x - 30, 120), Px(x + 8, 270), Col(kPink), 10.0f * s, ImDrawFlags_RoundCornersLeft);
+    fg->AddRect(Px(x - 30, 120), Px(x + 8, 270), IM_COL32(0x0B, 0x0F, 0x2C, 0xFF), 10.0f * s, ImDrawFlags_RoundCornersLeft, 2.0f * s);
+    AddTextVertical(fg, DisplayFont(), 18.0f * s, Px(x - 12, 205), IM_COL32(0x10, 0x10, 0x2A, 0xFF), T("الأصدقاء", "FRIENDS"));
+    fg->AddText(ImGui::GetFont(), 15.0f * s, Px(x - 17, 128), IM_COL32(0x10, 0x10, 0x2A, 0xFF), ">");
+    ImGui::SetNextWindowPos(Px(x, 100));
+    ImGui::SetNextWindowSize(ImVec2(330.0f * s, 526.0f * s));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, kCard);
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0x0B, 0x0F, 0x2C, 0xFF));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 3.0f * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * s, 14.0f * s));
+    ImGui::Begin("##friends", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    // A click on the tab closes the drawer.
+    if (ImGui::IsMouseClicked(0)) {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        if (m.x >= Px(x - 30, 0).x && m.x < Px(x, 0).x && m.y >= Px(0, 120).y && m.y < Px(0, 270).y) g_drawer_open = false;
+    }
+    ImGui::PushFont(DisplayFont(), 24.0f * s);
+    ImGui::TextColored(kYellow, "%s", T("الأصدقاء", "FRIENDS"));
+    ImGui::PopFont();
+    int online = 0;
+    for (const auto& f : g_friends) online += f.online ? 1 : 0;
+    char count[32];
+    std::snprintf(count, sizeof count, "%d/%zu", online, g_friends.size());
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        dl->AddRectFilled(ImVec2(wp.x + 250 * s, wp.y + 16 * s), ImVec2(wp.x + 300 * s, wp.y + 40 * s), Col(kGreen), 6.0f * s);
+        const ImVec2 t = ImGui::CalcTextSize(count);
+        dl->AddText(ImVec2(wp.x + 275 * s - t.x * 0.5f, wp.y + 28 * s - t.y * 0.5f), IM_COL32(0x10, 0x10, 0x2A, 0xFF), count);
+    }
+    const auto st = launcher_online::GetStatus();
+    ImGui::TextColored(kGrey, "%s", !OnlineOn() ? T("الأونلاين مطفأ (الإعدادات)", "Online is off (SETTINGS)")
+                                    : st.busy   ? T("جارٍ الاتصال...", "Connecting...")
+                                    : st.running ? T("أونلاين", "Online")
+                                                 : T("خدمة الأونلاين لم تبدأ", "Online service not started"));
+    ImGui::BeginChild("list", ImVec2(0, 250.0f * s));
+    if (g_friends.empty()) {
+        ImGui::Dummy(ImVec2(0, 70.0f * s));
+        ImGui::TextColored(kGrey, "   %s", T("لا يوجد أصدقاء بعد.", "No friends yet."));
+    }
+    for (int i = 0; i < int(g_friends.size()); ++i) {
+        const auto& f = g_friends[size_t(i)];
+        ImGui::PushID(i);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        if (ImGui::InvisibleButton("row", ImVec2(w, 40.0f * s))) g_friend_selected = i == g_friend_selected ? -1 : i;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 40 * s), IM_COL32(0x0E, 0x12, 0x33, 0xFF), 10.0f * s);
+        if (i == g_friend_selected) dl->AddRect(p, ImVec2(p.x + w, p.y + 40 * s), Col(kYellow), 10.0f * s, 0, 2.0f * s);
+        const ImU32 dot = f.in_game ? Col(kGreen) : f.online ? Col(kBlue) : IM_COL32(0x55, 0x5D, 0x80, 0xFF);
+        dl->AddRectFilled(ImVec2(p.x + 7 * s, p.y + 6 * s), ImVec2(p.x + 35 * s, p.y + 34 * s), dot, 9.0f * s);
+        const std::string initial = f.label.substr(0, 1);
+        const ImVec2 t = DisplayFont()->CalcTextSizeA(17.0f * s, FLT_MAX, 0, initial.c_str());
+        dl->AddText(DisplayFont(), 17.0f * s, ImVec2(p.x + 21 * s - t.x * 0.5f, p.y + 20 * s - t.y * 0.5f + 1 * s),
+                    IM_COL32(0x10, 0x10, 0x2A, 0xFF), initial.c_str());
+        dl->AddText(ImVec2(p.x + 46 * s, p.y + 2 * s), IM_COL32(255, 255, 255, 255), f.label.c_str());
+        const char* state = f.in_game ? T("داخل اللعبة", "In game")
+                          : f.online ? T("أونلاين (اللعبة مغلقة)", "Online (game closed)")
+                          : !f.named && st.running ? T("غير متصل · يجب أن يضيف كودك", "Offline · must add your code")
+                                                   : T("بدون اتصال", "Offline");
+        dl->AddText(ImGui::GetFont(), 13.0f * s, ImVec2(p.x + 46 * s, p.y + 21 * s), f.in_game ? Col(kGreen) : Col(kGrey), state);
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    // Copy the own code, add one, remove the selected friend.
+    ImGui::PushStyleColor(ImGuiCol_Button, kBlue);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.88f, 1.0f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.70f, 0.90f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.18f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Border, kBlue);
+    if (ImGui::Button(T("نسخ كودي", "COPY MY CODE"), ImVec2(-FLT_MIN, 32.0f * s))) {
+        const std::string code = launcher_online::OwnCode(a.root);
+        const bool ok = !code.empty() && CopyToClipboard(code);
+        g_friends_notice = ok ? T("تم نسخ الكود. يجب أن يضيف كل منكما الآخر.", "Code copied. You must add each other.")
+                              : T("تعذّر نسخ الكود.", "Could not copy the code.");
+        g_friends_notice_error = !ok;
+    }
+    ImGui::PopStyleColor(5);
+    ImGui::Spacing();
+    ImGui::TextColored(kGrey, "%s", T("إضافة صديق", "ADD A FRIEND"));
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##code", T("الصق كوده هنا", "Paste their code here"), g_friend_code, sizeof g_friend_code);
+    const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    ImGui::PushStyleColor(ImGuiCol_Button, kBlue);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.88f, 1.0f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.70f, 0.90f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.18f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Border, kBlue);
+    if (ImGui::Button(T("إضافة", "ADD"), ImVec2(half, 32.0f * s))) {
+        const std::string error = launcher_online::AddFriend(a.root, g_friend_code);
+        g_friends_notice = error.empty() ? T("تمت إضافة الصديق.", "Friend added.") : OnlineText(error);
+        g_friends_notice_error = !error.empty();
+        if (error.empty()) g_friend_code[0] = 0;
+        RefreshFriends(true);
+    }
+    ImGui::PopStyleColor(5);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(g_friend_selected < 0);
+    if (ImGui::Button(T("حذف", "REMOVE"), ImVec2(half, 32.0f * s)) && g_friend_selected >= 0) {
+        const auto row = g_friends[size_t(g_friend_selected)];
+        launcher_online::RemoveFriend(a.root, row.code);
+        g_friends_notice = row.label + T(" تم حذفه.", " removed.");
+        g_friends_notice_error = false;
+        g_friend_selected = -1;
+        RefreshFriends(true);
+    }
+    ImGui::EndDisabled();
+    if (!g_friends_notice.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(g_friends_notice_error ? kPink : kGreen, "%s", g_friends_notice.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+}
+
+/// A scrolling page body under the title, from y0 to the footer.
+void BeginBody(const char* id, float y0 = 170.0f) {
+    ImGui::SetCursorScreenPos(Px(40, y0));
+    ImGui::BeginChild(id, ImVec2(1200.0f * g_ui_scale, (650.0f - y0) * g_ui_scale), ImGuiChildFlags_None);
+}
+void EndBody() { ImGui::EndChild(); }
+
+/// A fixed-size card (the Settings columns), its content scrolling inside.
+void BeginColumnCard(const char* id, float x, float y, float w, float h, const ImVec4& title_color, const char* title) {
+    ImGui::SetCursorScreenPos(Px(x, y));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kCard);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.16f, 0.20f, 0.36f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f * g_ui_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * g_ui_scale, 14.0f * g_ui_scale));
+    ImGui::BeginChild(id, ImVec2(w * g_ui_scale, h * g_ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushFont(DisplayFont(), 22.0f * g_ui_scale);
+    ImGui::TextColored(title_color, "%s", title);
+    ImGui::PopFont();
+    g_section_color = &title_color;
+    g_label_above = true;
+}
+void EndColumnCard() {
+    g_section_color = nullptr;
+    g_label_above = false;
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 void Frame() {
     App& a = g_app;
     PollJobs();
+    g_hot.clear();
+    g_section_index = 0;
+    if (g_goto_tab) {
+        GoTo(g_goto_tab);
+        g_goto_tab = nullptr;
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->WorkPos);
-    ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("launcher", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+                     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    Backdrop();
     Header();
 
-    if (!a.notice.empty()) {
-        BeginCard("notice");
-        ImGui::TextColored(kYellow, ICON_INFO);
-        ImGui::SameLine();
-        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 3.0f);
-        ImGui::TextUnformatted(a.notice.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 1.5f);
-        if (ImGui::SmallButton("OK")) a.notice.clear();
-        EndCard();
-    }
-
     bool on_controls = false;
-    if (ImGui::BeginTabBar("tabs")) {
-        const char* go = g_goto_tab;
-        g_goto_tab = nullptr;
-        auto tab = [go](const char* icon, const char* label, const char* id) {
-            const std::string text = std::string(icon) + "  " + label + "###" + id;
-            const bool select = go && std::strcmp(go, id) == 0;
-            return ImGui::BeginTabItem(text.c_str(), nullptr, select ? ImGuiTabItemFlags_SetSelected : 0);
-        };
-        if (tab(ICON_PLAY, T("Jugar", "Play"), "play")) {
-            ImGui::BeginChild("play");
-            PlayTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
+    switch (g_page) {
+    case kHome: HomePage(); break;
+    case kSettings: {
+        PageTitle(T("الإعدادات", "SETTINGS"));
+        ImGui::SetCursorScreenPos(Px(330, 118));
+        ImGui::PushTextWrapPos(Px(1240, 0).x);
+        SettingsIntro();
+        ImGui::PopTextWrapPos();
+        BeginColumnCard("graphics", 40, 168, 384, 478, kBlue, T("الرسوميات", "GRAPHICS"));
+        SettingsTab(0);
+        EndColumnCard();
+        BeginColumnCard("display", 448, 168, 384, 478, kPink, T("الشاشة والأداء", "DISPLAY & PERFORMANCE"));
+        SettingsTab(1);
+        EndColumnCard();
+        BeginColumnCard("online", 856, 168, 384, 478, kYellow, T("الأونلاين واللعب الجماعي", "ONLINE & MULTI"));
+        OnlineSettings();
+        g_section_color = &kGreen;
+        Section(T("اللعبة", "GAME"));
+        SettingsTab(2);
+        EndColumnCard();
+        break;
+    }
+    case kControls:
+        PageTitle(T("التحكم", "CONTROLS"));
+        on_controls = true;
+        BeginBody("controls_body", 168);
+        ControlsTab();
+        EndBody();
+        break;
+    case kTrophies:
+        PageTitle(T("الكؤوس", "TROPHIES"));
+        BeginBody("trophies_body", 168);
+        TrophiesTab();
+        EndBody();
+        break;
+    case kPatches:
+        PageTitle(T("الباتشات", "PATCHES"));
+        BeginBody("patches_body", 168);
+        BeginCard("patches_card");
+        PatchesTab();
+        EndCard();
+        EndBody();
+        break;
+    case kSaves: {
+        PageTitle(T("الحفظ", "SAVES"));
+        ImGui::SetCursorScreenPos(Px(300, 116));
+        const char* parts[] = {T("الحفظ", "SAVES"), "DLC"};
+        Pills("saves_parts", parts, 2, &g_saves_part, 160.0f);
+        BeginBody("saves_body", 168);
+        BeginCard("saves_card");
+        if (g_saves_part == 0) SavesTab();
+        else DlcTab();
+        EndCard();
+        EndBody();
+        break;
+    }
+    case kAdvanced:
+        PageTitle(T("متقدم", "ADVANCED"));
+        BeginBody("advanced_body", 168);
+        GameSetupCard();
+        ImGui::Spacing();
+        BeginCard("tools_card");
+        ToolsTab();
+        EndCard();
+        ImGui::Spacing();
+        BeginCard("log_card");
+        g_section_color = &kBlue;
+        Section(T("سجل الجلسة", "SESSION LOG"));
+        g_section_color = nullptr;
+        {
+            std::scoped_lock lock{a.mutex};
+            if (a.log.empty()) ImGui::TextColored(kGrey, "%s", T("لا توجد جلسة بعد.", "No session yet."));
         }
-        if (tab(ICON_SETTINGS, T("Ajustes", "Settings"), "settings")) {
-            ImGui::BeginChild("settings");
-            SettingsTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_GAMEPAD, T("Controles", "Controls"), "controls")) {
-            on_controls = true;
-            ControlsTab();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_STAR, T("Logros", "Achievements"), "achievements")) {
-            ImGui::BeginChild("achievements");
-            TrophiesTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_PUZZLE, T("Parches", "Patches"), "patches")) {
-            ImGui::BeginChild("patches");
-            PatchesTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_SAVE, T("Guardados", "Saves"), "saves")) {
-            ImGui::BeginChild("saves");
-            SavesTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_PACKAGE, "DLC", "dlc")) {
-            ImGui::BeginChild("dlc");
-            DlcTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        if (tab(ICON_TOOLS, T("Herramientas", "Tools"), "tools")) {
-            ImGui::BeginChild("tools");
-            ToolsTab();
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+        ImGui::BeginChild("log_box", ImVec2(0, 260.0f * g_ui_scale));
+        LogPanel();
+        ImGui::EndChild();
+        EndCard();
+        EndBody();
+        break;
     }
     if (!on_controls) LeaveControls();
+
+    if (!a.notice.empty()) {
+        // A toast over the page, above the footer.
+        ImGui::SetNextWindowPos(Px(640, 600), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f * g_ui_scale, 0), ImVec2(900.0f * g_ui_scale, 300.0f * g_ui_scale));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.12f, 0.26f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Border, kYellow);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f * g_ui_scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f * g_ui_scale);
+        ImGui::Begin("##notice", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::TextColored(kYellow, ICON_INFO);
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 44.0f);
+        ImGui::TextUnformatted(a.notice.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("OK")) a.notice.clear();
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+    }
 
     SaveConfirmations();
     if (a.confirm_clear_cache) {
@@ -4189,14 +4876,14 @@ void Frame() {
         a.confirm_clear_cache = false;
     }
     if (ImGui::BeginPopupModal("clear_cache", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        ImGui::TextUnformatted(T("¿Borrar la caché de shaders? El próximo arranque volverá a compilarlos.",
+        ImGui::TextUnformatted(T("مسح ذاكرة الـ Shaders؟ التشغيل القادم سيبنيها من جديد.",
                                  "Clear the shader cache? The next start compiles them again."));
-        if (ImGui::Button(T("Borrar", "Clear"))) {
+        if (ImGui::Button(T("مسح", "Clear"))) {
             ClearShaderCache();
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Cancelar", "Cancel"))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(T("إلغاء", "Cancel"))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -4205,17 +4892,19 @@ void Frame() {
         a.want_close = false;
     }
     if (ImGui::BeginPopupModal("close", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
-        ImGui::TextUnformatted(T("El juego sigue abierto.", "The game is still running."));
-        if (ImGui::Button(T("Cerrar el juego y el launcher", "Stop the game and quit"))) {
+        ImGui::TextUnformatted(T("اللعبة ما زالت تعمل.", "The game is still running."));
+        if (ImGui::Button(T("إيقاف اللعبة والخروج", "Stop the game and quit"))) {
             StopGame();
             PostQuitMessage(0);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button(T("Cancelar", "Cancel"))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(T("إلغاء", "Cancel"))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+    Footer();
     ImGui::End();
+    FriendsDrawer();
 }
 
 void LoadState() {
@@ -4237,7 +4926,8 @@ void LoadState() {
     a.launcher.Load(LauncherIni());
     a.game.Load(GameIni());
     const std::string lang = a.launcher.Get("ui_language");
-    g_spanish = lang.empty() ? PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_SPANISH : lang == "es";
+    g_arabic = lang == "ar" || ((lang.empty() || lang == "es") && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_ARABIC);
+    arabic::Install(g_arabic);
     a.game_dir = TextPath(a.launcher.Get("game_dir"));
     a.base_dir = TextPath(a.launcher.Get("base_dir"));
     a.update_dir = TextPath(a.launcher.Get("update_dir"));
@@ -4286,7 +4976,7 @@ void LoadState() {
             drop_uw(a.patch_enabled);
             drop_uw(a.patch_disabled);
             WritePatchConfig(a.patch_enabled, a.patch_disabled);
-            a.notice = T("Ultra-panorámico movido a Ajustes > Pantalla > Aspecto / salida.",
+            a.notice = T("تم نقل UltraWide إلى الإعدادات > الشاشة > نسبة العرض / المخرج.",
                          "Ultrawide moved to Settings > Display > Aspect / output.");
         } else {
             // No single legacy toggle: just hide any stale entries from the JSON.
@@ -4302,6 +4992,8 @@ void LoadState() {
     }
     StartCheck();
     StartProbe();
+    // Multiplayer Online was on: this PC's service starts with the launcher (CTRNativePorted).
+    if (OnlineOn()) launcher_online::Start(a.root, PlayerName());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -4392,6 +5084,17 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam)) return true;
     switch (msg) {
+    case WM_NCHITTEST: {
+        // Borderless window: the header drags it, except over its buttons and tabs.
+        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(hwnd, &pt);
+        if (pt.y >= 0 && pt.y < LONG(g_header_px)) {
+            for (const ImRect& r : g_hot)
+                if (r.Contains(ImVec2(float(pt.x), float(pt.y)))) return HTCLIENT;
+            return HTCAPTION;
+        }
+        return HTCLIENT;
+    }
     case WM_SIZE:
         if (wparam == SIZE_MINIMIZED) return 0;
         g_resize_w = LOWORD(lparam);
@@ -4453,6 +5156,51 @@ void LoadFonts() {
     merge();
     g_font_title = io.Fonts->AddFontFromFileTTF(title.c_str());
     merge();
+    // The Nitro look: Luckiest Guy (assets\launcher, Apache-2.0) for titles and tabs, with Segoe
+    // UI behind it for the letters it lacks; Segoe UI Semibold Italic for the status lines.
+    const fs::path display = ExeDir() / L"assets" / L"launcher" / L"LuckiestGuy-Regular.ttf";
+    if (fs::is_regular_file(display, ec)) {
+        g_font_display = io.Fonts->AddFontFromFileTTF(PathText(display).c_str());
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        // Arabic titles in Lemonada CTR (OFL-1.1, its Arabic presentation forms mapped by
+        // tools/arabic_presentation_forms.py): bold and rounded, the closest to the CTR style.
+        const fs::path arabic_display = ExeDir() / L"assets" / L"launcher" / L"LemonadaCTR-Bold.ttf";
+        if (fs::is_regular_file(arabic_display, ec)) {
+            ImFontConfig ac = cfg;
+            ac.GlyphOffset = ImVec2(0.0f, -2.0f);
+            io.Fonts->AddFontFromFileTTF(PathText(arabic_display).c_str(), 0.0f, &ac);
+        }
+        io.Fonts->AddFontFromFileTTF(body.c_str(), 0.0f, &cfg);
+        merge();
+    }
+    const std::string italic = font({L"seguisbi.ttf", L"segoeuii.ttf"});
+    if (!italic.empty()) {
+        g_font_italic = io.Fonts->AddFontFromFileTTF(italic.c_str());
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        io.Fonts->AddFontFromFileTTF(body.c_str(), 0.0f, &cfg);  // Arabic, if the italic lacks it
+        merge();
+    }
+}
+
+/// The Nitro look's artwork (assets\launcher next to the launcher; anyone can swap the files):
+/// background.jpg for Home, logo.png for the header. Without background.jpg, the game's own
+/// background from the player's dump (sce_sys\pic1.png), as CTRNativePorted does.
+void LoadArtwork() {
+    const fs::path assets = ExeDir() / L"assets" / L"launcher";
+    std::error_code ec;
+    for (const wchar_t* name : {L"background.jpg", L"background.png"})
+        if (!g_art && fs::is_regular_file(assets / name, ec)) g_art = PngTexture(ReadText(assets / name), &g_art_w, &g_art_h);
+    if (fs::is_regular_file(assets / L"logo.png", ec)) g_brand = PngTexture(ReadText(assets / L"logo.png"), &g_brand_w, &g_brand_h);
+}
+void LoadDumpArtwork() {
+    if (g_art) return;
+    std::error_code ec;
+    for (const fs::path& dir : {g_app.game_dir, g_app.update_dir, g_app.base_dir})
+        for (const wchar_t* name : {L"pic1.png", L"pic0.png"})
+            if (!g_art && !dir.empty() && fs::is_regular_file(dir / L"sce_sys" / name, ec))
+                g_art = PngTexture(ReadText(dir / L"sce_sys" / name), &g_art_w, &g_art_h);
 }
 
 // The application icon (resource 1) as a texture for the header.
@@ -4539,13 +5287,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
 #endif
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    // --tab <play|settings|controls|patches|saves|dlc|tools>: the tab to open first (shortcuts, docs).
+    // --tab <play|settings|controls|patches|saves|dlc|tools|friends>: the tab to open first (shortcuts,
+    // docs); --play: start the game as soon as it is ready (online too, once connected).
     static std::string first_tab;
     {
         int argc = 0;
         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         for (int i = 1; argv && i + 1 < argc; ++i)
             if (std::wstring(argv[i]) == L"--tab") first_tab = PathText(fs::path(argv[i + 1]));
+        for (int i = 1; argv && i < argc; ++i)
+            if (std::wstring(argv[i]) == L"--play") g_autoplay = true;
         if (argv) LocalFree(argv);
         if (!first_tab.empty()) g_goto_tab = first_tab.c_str();
     }
@@ -4559,13 +5310,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                                 GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
-    const int width = int(940 * scale), height = int(800 * scale);
+    const int width = int(1280 * scale), height = int(720 * scale);
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     const int x = work.left + std::max(0, int(work.right - work.left - width) / 2);
     const int y = work.top + std::max(0, int(work.bottom - work.top - height) / 2);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"CTR Nitro-Fueled PC", WS_OVERLAPPEDWINDOW, x, y, width, height, nullptr,
-                              nullptr, instance, nullptr);
+    // The Nitro look: a borderless window with its own header (rounded corners on Windows 11).
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"CTR Nitro-Fueled PC", WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX, x, y, width,
+                              height, nullptr, nullptr, instance, nullptr);
     g_app.hwnd = hwnd;
     if (!CreateDevice(hwnd)) {
         CleanupDevice();
@@ -4593,14 +5345,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     {
         const BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof dark);
-        const COLORREF caption = RGB(0x11, 0x13, 0x1A);
+        const COLORREF caption = RGB(0x0E, 0x12, 0x33);
         DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &caption, sizeof caption);
+        const int round = 2;  // DWMWCP_ROUND
+        DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof round);
     }
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
     LoadLogo(instance);
+    LoadArtwork();
     LoadState();
+    LoadDumpArtwork();
 
     bool done = false;
     while (!done) {
@@ -4648,8 +5404,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
     if (g_app.probe.joinable()) g_app.probe.join();
     Pads::Stop();
+    launcher_online::Shutdown();
     ReleaseTrophies(g_trophies);
     if (g_logo) g_logo->Release();
+    if (g_art) g_art->Release();
+    if (g_brand) g_brand->Release();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

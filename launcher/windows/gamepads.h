@@ -69,9 +69,9 @@ const char* InputName(int input);
 /// The input of a runtime/SDL name, -1 when unknown.
 int InputFromName(const std::string& name);
 /// How a button is printed on a controller of this family (and type): "A", "Cruz", "LB", "ZL"...
-std::string Label(int input, Family family, int type, bool spanish);
+std::string Label(int input, Family family, int type, bool arabic);
 /// "Xbox One / Series", "DualSense (PS5)"...
-std::string TypeName(int type, bool spanish);
+std::string TypeName(int type, bool arabic);
 Family FamilyOf(int type);
 
 }  // namespace Pads

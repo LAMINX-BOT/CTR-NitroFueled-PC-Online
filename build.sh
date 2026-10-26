@@ -20,14 +20,21 @@ MINGW*|MSYS*)
             git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
         fi
     done
+    # CTR-NitroFueled-PC: Dear ImGui's optional text-shape hook (the launcher's Arabic).
+    for patch in gpu/patches/imgui/*.patch; do
+        if ! git -C gpu/third_party/imgui apply --reverse --check "$PWD/$patch" 2>/dev/null; then
+            git -C gpu/third_party/imgui apply "$PWD/$patch"
+        fi
+    done
     cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO=off \
         -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}"
-    if ! ninja -C out/gpu sacredfire bb-gpu-capabilities ctr-launcher > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu sacredfire bb-gpu-capabilities ctr-launcher ctr_online ctr_online_server > out/gpu-build.log 2>&1; then
         grep -v '^\[' out/gpu-build.log | tail -40 >&2
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/sacredfire.exe out/gpu/bb-gpu-capabilities.exe out/gpu/CTR-NitroFueled-PC.exe out/
+    cp out/gpu/sacredfire.exe out/gpu/bb-gpu-capabilities.exe out/gpu/CTR-NitroFueled-PC.exe out/gpu/ctr_online.dll \
+       out/gpu/ctr_online_server.exe out/
     version=$(git describe --tags --match 'v*' --always 2>/dev/null || echo unknown)
     printf '%s-windows\n' "$version" > out/VERSION
     echo "Built $PWD/out/sacredfire.exe ($(cat out/VERSION))"
@@ -85,6 +92,11 @@ if ! fsr_patches_apply --check 2>/dev/null; then
     git -C gpu/third_party/fsr-vulkan checkout -- .
 fi
 fsr_patches_apply
+for patch in gpu/patches/imgui/*.patch; do
+    if ! git -C gpu/third_party/imgui apply --reverse --check "$PWD/$patch" 2>/dev/null; then
+        git -C gpu/third_party/imgui apply "$PWD/$patch"
+    fi
+done
 cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
     -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"

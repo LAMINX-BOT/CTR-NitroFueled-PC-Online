@@ -1,0 +1,108 @@
+diff --git a/imgui.h b/imgui.h
+index 611c5f28d..1b4048b2a 100644
+--- a/imgui.h
++++ b/imgui.h
+@@ -3927,6 +3927,14 @@ enum ImFontFlags_
+ // - Since 1.92.0 a font may be rendered as any size! Therefore a font doesn't have one specific size.
+ // - Use 'font->GetFontBaked(size)' to retrieve the ImFontBaked* corresponding to a given size.
+ // - If you used g.Font + g.FontSize (which is frequent from the ImGui layer), you can use g.FontBaked as a shortcut, as g.FontBaked == g.Font->GetFontBaked(g.FontSize).
++// CTR-NitroFueled-PC: an optional text transform for scripts Dear ImGui does not lay out
++// (the launcher's Arabic: contextual forms, then right-to-left order). visual=0: shape, logical
++// order, for measuring and wrapping; visual=1: one line in display order. Returns the transformed
++// UTF-8 text (kept valid by the callee) and its end, or NULL when the text needs nothing. NULL
++// by default: the text paths then run exactly as upstream.
++typedef const char* (*ImFontTextShapeFn)(const char* text, const char* text_end, int visual, const char** out_end);
++extern IMGUI_API ImFontTextShapeFn GImFontTextShape;
++
+ struct ImFont
+ {
+     // [Internal] Members: Hot ~12-20 bytes
+diff --git a/imgui_draw.cpp b/imgui_draw.cpp
+index e582f5cd8..f1ad0ffa6 100644
+--- a/imgui_draw.cpp
++++ b/imgui_draw.cpp
+@@ -5664,12 +5664,36 @@ const char* ImFont::CalcWordWrapPosition(float size, const char* text, const cha
+     return ImFontCalcWordWrapPositionEx(this, size, text, text_end, wrap_width, ImDrawTextFlags_None);
+ }
+ 
++ImFontTextShapeFn GImFontTextShape = NULL;
++
+ ImVec2 ImFontCalcTextSizeEx(ImFont* font, float size, float max_width, float wrap_width, const char* text_begin, const char* text_end_display, const char* text_end, const char** out_remaining, ImVec2* out_offset, ImDrawTextFlags flags)
+ {
+     if (!text_end)
+         text_end = text_begin + ImStrlen(text_begin); // FIXME-OPT: Need to avoid this.
+     if (!text_end_display)
+         text_end_display = text_end;
++    if (GImFontTextShape && !(flags & ImDrawTextFlags_Shaped) && text_end_display == text_end)
++    {
++        // Shaped text measures as it is drawn. out_remaining maps back by code points.
++        const char* shaped_end = NULL;
++        if (const char* shaped = GImFontTextShape(text_begin, text_end, 0, &shaped_end))
++        {
++            const char* rest = NULL;
++            const ImVec2 r = ImFontCalcTextSizeEx(font, size, max_width, wrap_width, shaped, shaped_end, shaped_end, &rest, out_offset, flags | ImDrawTextFlags_Shaped);
++            if (out_remaining != NULL)
++            {
++                const char* s = text_begin;
++                for (const char* p = shaped; p < rest && s < text_end; )
++                {
++                    unsigned int c;
++                    p += ImTextCharFromUtf8(&c, p, shaped_end);
++                    s += ImTextCharFromUtf8(&c, s, text_end);
++                }
++                *out_remaining = rest >= shaped_end ? text_end : s;
++            }
++            return r;
++        }
++    }
+ 
+     ImFontBaked* baked = font->GetFontBaked(size);
+     const float line_height = size;
+@@ -5808,6 +5832,35 @@ void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, Im
+ // DO NOT CALL DIRECTLY THIS WILL CHANGE WILDLY IN 2026. Use ImDrawList::AddText().
+ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, const ImVec4& clip_rect, const char* text_begin, const char* text_end, float wrap_width, ImDrawTextFlags flags)
+ {
++    if (GImFontTextShape && !(flags & ImDrawTextFlags_Shaped))
++    {
++        // Lines are laid out on the shaped text in logical order, then drawn in display order.
++        if (!text_end)
++            text_end = text_begin + ImStrlen(text_begin);
++        const char* shaped_end = NULL;
++        if (const char* shaped = GImFontTextShape(text_begin, text_end, 0, &shaped_end))
++        {
++            const ImDrawTextFlags line_flags = flags | ImDrawTextFlags_Shaped;
++            float y = pos.y;
++            for (const char* s = shaped; s < shaped_end && y <= clip_rect.w; y += size)
++            {
++                const char* line_end = (const char*)ImMemchr(s, '\n', (size_t)(shaped_end - s));
++                if (!line_end)
++                    line_end = shaped_end;
++                const char* eol = line_end;
++                if (wrap_width > 0.0f)
++                {
++                    eol = ImFontCalcWordWrapPositionEx(this, size, s, line_end, wrap_width, line_flags);
++                    if (eol <= s) { unsigned int c; eol = s + ImTextCharFromUtf8(&c, s, line_end); }
++                }
++                const char* visual_end = NULL;
++                const char* visual = GImFontTextShape(s, eol, 1, &visual_end);
++                RenderText(draw_list, size, ImVec2(pos.x, y), col, clip_rect, visual ? visual : s, visual ? visual_end : eol, 0.0f, line_flags);
++                s = eol < line_end ? ImTextCalcWordWrapNextLineStart(eol, shaped_end, flags) : line_end + (line_end < shaped_end ? 1 : 0);
++            }
++            return;
++        }
++    }
+ begin:
+     // Align to be pixel perfect
+     float x = pos.x;
+diff --git a/imgui_internal.h b/imgui_internal.h
+index d2a8595a1..6c2259c4c 100644
+--- a/imgui_internal.h
++++ b/imgui_internal.h
+@@ -443,6 +443,7 @@ enum ImDrawTextFlags_
+     ImDrawTextFlags_CpuFineClip         = 1 << 0,    // Must be == 1/true for legacy with 'bool cpu_fine_clip' arg to RenderText()
+     ImDrawTextFlags_WrapKeepBlanks      = 1 << 1,
+     ImDrawTextFlags_StopOnNewLine       = 1 << 2,
++    ImDrawTextFlags_Shaped              = 1 << 30,   // CTR-NitroFueled-PC: text already through GImFontTextShape
+ };
+ IMGUI_API ImVec2        ImFontCalcTextSizeEx(ImFont* font, float size, float max_width, float wrap_width, const char* text_begin, const char* text_end_display, const char* text_end, const char** out_remaining, ImVec2* out_offset, ImDrawTextFlags flags);
+ IMGUI_API const char*   ImFontCalcWordWrapPositionEx(ImFont* font, float size, const char* text, const char* text_end, float wrap_width, ImDrawTextFlags flags = 0);
