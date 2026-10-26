@@ -236,6 +236,10 @@ def main():
     (folder / 'bin' / 'VERSION').write_text(version + '\n')
     for f in online:
         shutil.copy2(f, folder / 'bin')
+    # RelWithDebInfo keeps DWARF in sacredfire.exe (about 125 MB of the 140). The package drops it:
+    # the code and data sections are the same bytes, crash reports still name exe+offset.
+    for f in (folder / 'bin' / 'sacredfire.exe', folder / 'bin' / 'bb-gpu-capabilities.exe'):
+        subprocess.run([str(CLANG_BIN / 'llvm-strip.exe'), '--strip-debug', str(f)], check=True)
     dlls = closure([exe, caps, *online])
     for path in dlls.values():
         shutil.copy2(path, folder / 'bin')
