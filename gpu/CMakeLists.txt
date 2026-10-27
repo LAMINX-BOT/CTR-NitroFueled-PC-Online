@@ -264,6 +264,13 @@ if (WIN32)
     target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt
         ctr_online_service)
     set_target_properties(ctr-launcher PROPERTIES OUTPUT_NAME CTR-NitroFueled-PC INTERPROCEDURAL_OPTIMIZATION OFF)
+    # The launcher's file operations from the command line (--import, --restore, --merge, ...).
+    add_executable(ctr-launcher-selftest EXCLUDE_FROM_ALL $<TARGET_PROPERTY:ctr-launcher,SOURCES>)
+    target_include_directories(ctr-launcher-selftest PRIVATE third_party/imgui third_party/imgui/backends ${SDL3_INCLUDE_DIRS})
+    target_compile_definitions(ctr-launcher-selftest PRIVATE UNICODE _UNICODE LAUNCHER_SELFTEST)
+    target_link_options(ctr-launcher-selftest PRIVATE -static -municode)
+    target_link_libraries(ctr-launcher-selftest PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt
+        ctr_online_service)
 
     # Online play (online/, from guzuold/CTRNativePorted, GPL-2.0): ctr_online.dll holds the
     # guest NP, Net, Http and WebApi functions; sacredfire.exe loads it only with CTR_ONLINE=1

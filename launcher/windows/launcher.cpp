@@ -359,6 +359,70 @@ FolderInfo Analyze(const fs::path& dir) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Game files: a dump that a broken copy or extraction left with empty or missing files passes the
+// executable check, and the game then crashes loading its data (exit code 3). The data files are
+// checked here: never empty, and for the European 1.21 (CUSA14876) the size of every one of them
+// (tools/gen_game_files.py, from a working merged folder).
+
+struct ExpectedFile {
+    const char* path;
+    std::uintmax_t size;
+};
+constexpr ExpectedFile kGameFilesCusa14876[] = {
+#include "game_files_cusa14876.inc"
+};
+
+/// The game's data files: archives\, sce_module\ and eboot.bin.
+bool IsDataFile(const fs::path& relative) {
+    const std::wstring first = relative.begin() == relative.end() ? L"" : relative.begin()->wstring();
+    return _wcsicmp(first.c_str(), L"archives") == 0 || _wcsicmp(first.c_str(), L"sce_module") == 0 ||
+           _wcsicmp(relative.wstring().c_str(), L"eboot.bin") == 0;
+}
+
+struct FileProblems {
+    std::vector<std::string> broken;   // empty or missing: the game crashes on them
+    std::vector<std::string> resized;  // another size than in a working dump (logged, not blocking:
+                                       // another legitimate build of the update may differ)
+    std::string Summary(size_t max_names = 6) const {
+        std::string text;
+        for (size_t i = 0; i < broken.size() && i < max_names; ++i) text += (i ? ", " : "") + broken[i];
+        if (broken.size() > max_names) text += ", ... (+" + std::to_string(broken.size() - max_names) + ")";
+        return text;
+    }
+};
+
+/// Empty data files of a dump, and for a merged CUSA14876 1.21 the missing or wrongly sized ones.
+FileProblems VerifyGameFiles(const fs::path& dir, const std::string& title, bool complete) {
+    FileProblems p;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        const fs::path rel = fs::relative(it->path(), dir, e2);
+        if (IsDataFile(rel) && it->file_size(e2) == 0 && !e2)
+            p.broken.push_back(PathText(rel.generic_wstring()) + T(" (فارغ 0 KB)", " (empty, 0 KB)"));
+    }
+    if (complete && title == "CUSA14876") {
+        for (const auto& f : kGameFilesCusa14876) {
+            const fs::path path = dir / fs::path(Widen(f.path));
+            std::error_code e2;
+            const std::uintmax_t size = fs::file_size(path, e2);
+            if (e2) p.broken.push_back(std::string(f.path) + T(" (مفقود)", " (missing)"));
+            else if (size != f.size && size != 0)
+                p.resized.push_back(std::string(f.path) + " (" + std::to_string(size) + " / " + std::to_string(f.size) + ")");
+        }
+    }
+    return p;
+}
+
+std::string BrokenFilesMessage(const FileProblems& p) {
+    return std::string(T("ملفات اللعبة ناقصة أو تالفة (", "The game files are incomplete or damaged (")) +
+           std::to_string(p.broken.size()) + T(" ملف): ", " files): ") + p.Summary() +
+           T(". غالباً لم يكتمل نسخ أو فك ضغط نسختك: أعد نسخ هذه الملفات من مصدر سليم.",
+             ". Your dump was most likely not fully copied or extracted: copy these files again from a sound source.");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Processes
 
 fs::path ExeDir() {
@@ -719,10 +783,20 @@ void StartCheck() {
         const std::wstring cmd = Quote(app.python->exe) + L" " + app.python->args + L"-X utf8 " +
                                  Quote((app.root / L"scripts" / L"game_check.py").wstring()) + L" " + Quote(dir.wstring());
         const Captured r = RunCaptured(app.python->exe, cmd, app.root, 120000);
+        // The data files, which game_check.py does not read (empty files crash the game: code 3).
+        const FileProblems files = r.started && r.code == 0 ? VerifyGameFiles(dir, app.game_info.title, true) : FileProblems{};
         {
             std::scoped_lock lock{app.mutex};
-            app.game_ok = r.started && r.code == 0;
-            app.check_message = r.started ? Trim(r.output) : "Python could not be started.";
+            app.game_ok = r.started && r.code == 0 && files.broken.empty();
+            app.check_message = !r.started ? "Python could not be started." : !files.broken.empty() ? BrokenFilesMessage(files) : Trim(r.output);
+            app.log.push_back(files.broken.empty() ? "Game files: checked, none empty or missing"
+                                                   : "Game files: " + std::to_string(files.broken.size()) + " broken: " + files.Summary(40));
+            if (!files.resized.empty()) {
+                std::string list;
+                for (size_t i = 0; i < files.resized.size() && i < 40; ++i) list += (i ? ", " : "") + files.resized[i];
+                app.log.push_back("Game files: " + std::to_string(files.resized.size()) +
+                                  " not the size of the reference dump (bytes / expected): " + list);
+            }
         }
         app.game_checked = true;
         app.job_finished = true;
@@ -765,6 +839,14 @@ void StartMerge(std::vector<fs::path> sources) {
         }
         std::string error;
         if (ec) error = "Cannot read the game folders: " + ec.message();
+        // A source left empty by a broken copy or extraction would be merged as it is and crash
+        // the game later: stop here and say which files.
+        FileProblems empty;
+        for (const auto& [from, rel] : files) {
+            std::error_code e2;
+            if (error.empty() && IsDataFile(rel) && fs::file_size(from, e2) == 0 && !e2) empty.broken.push_back(PathText(from));
+        }
+        if (error.empty() && !empty.broken.empty()) error = BrokenFilesMessage(empty);
         app.merge_total = files.size();
         size_t copied = 0;
         for (size_t i = 0; error.empty() && i < files.size(); ++i) {
@@ -780,6 +862,18 @@ void StartMerge(std::vector<fs::path> sources) {
                 ++copied;
             }
             app.merge_done = i + 1;
+        }
+        // Every merged file the size of its source (the update's version where both have it).
+        if (error.empty()) {
+            std::map<fs::path, fs::path> last;  // relative path -> the source that won
+            for (const auto& [from, rel] : files) last[rel] = from;
+            FileProblems wrong;
+            for (const auto& [rel, from] : last) {
+                std::error_code e1, e2;
+                if (fs::file_size(target / rel, e1) != fs::file_size(from, e2) || e1 || e2) wrong.broken.push_back(PathText(rel));
+            }
+            if (!wrong.broken.empty())
+                error = std::string(T("لم يكتمل دمج بعض الملفات: ", "Some files were not merged correctly: ")) + wrong.Summary();
         }
         {
             std::scoped_lock lock{app.mutex};
@@ -1722,6 +1816,11 @@ void GameSetupCard() {
         }
         ImGui::SameLine();
         if (ImGui::Button(T("فتح المجلد", "Open folder"))) OpenInShell(a.game_dir);
+        ImGui::SameLine();
+        // Every data file again (empty or missing files crash the game with code 3).
+        ImGui::BeginDisabled(busy || a.game_running);
+        if (ImGui::Button(T("فحص ملفات اللعبة", "Check game files"))) StartCheck();
+        ImGui::EndDisabled();
     } else {
         if (a.game_info.kind == Kind::Update) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
@@ -4445,6 +4544,10 @@ void HomePage() {
         status = T("Python غير موجود", "Python is missing");
         color = kOrange;
         under = T("لا يوجد python\\python.exe بجانب المشغل.", "No python\\python.exe next to the launcher.");
+    } else if (!ready && a.game_info.kind == Kind::Complete && a.game_checked && !a.game_info.split) {
+        status = T("ملفات اللعبة فيها مشكلة", "The game files have a problem");
+        color = kOrange;
+        under = T("افتح متقدم لرؤية الملفات الناقصة أو التالفة.", "Open ADVANCED to see the missing or damaged files.");
     } else if (!ready) {
         status = a.game_info.kind == Kind::Complete && !a.game_checked ? T("جارٍ فحص اللعبة...", "Checking the game...")
                                                                        : T("جهّز مجلد اللعبة", "Set up the game folder");
@@ -5243,6 +5346,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             g_app.root = argv[argc - 1];
             std::string result;
             if (op == L"--import" && argc == 4) result = ImportSaves(argv[2]);
+            else if (op == L"--merge" && argc == 5) {
+                // --merge <base game> <1.21 update> <port>: the Prepare button's merge, then its check.
+                g_app.base_dir = argv[2];
+                g_app.update_dir = argv[3];
+                g_app.base_info = Analyze(g_app.base_dir);
+                g_app.update_info = Analyze(g_app.update_dir);
+                StartMerge({g_app.base_dir, g_app.update_dir});
+                JoinWorker();
+                if (!g_app.job_error.empty()) result = "merge error: " + g_app.job_error;
+                else {
+                    g_app.game_info = Analyze(g_app.game_dir);
+                    const FileProblems f = VerifyGameFiles(g_app.game_dir, g_app.game_info.title, true);
+                    result = "merged " + std::to_string(g_app.merge_done) + " files into " + PathText(g_app.game_dir) +
+                             (f.broken.empty() ? "; files ok" : "; " + BrokenFilesMessage(f)) +
+                             (f.resized.empty() ? "" : "; resized " + std::to_string(f.resized.size()));
+                }
+            }
             else if (op == L"--restore" && argc == 4) result = RestoreBackup(argv[2]);
             else if (op == L"--dlc") {
                 for (const auto& d : ScanDlc())

@@ -305,6 +305,7 @@ def main():
                           encoding='utf-8', errors='replace', creationflags=no_console()).stdout.split()
     title_id, app_version = (info + [TITLE_ID, APP_VERSION][len(info):])[:2]
     say(f'Game profile: {env["BB_GAME_PROFILE"]} ({title_id} {app_version})')
+    say(f'Game folder: {game}')
 
     # UltraWide v1.0 by tcosi: dispatch the selected aspect-ratio patch (Settings > Display). Made for
     # CUSA13795; the European edition uses the ported data (scripts/ultrawide_eu.py, v0.4).
