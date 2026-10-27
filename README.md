@@ -63,7 +63,7 @@ game keeps that port's performance. With online play off, nothing of it is even 
 
 ### Download and play
 
-1. Download `CTR-NitroFueled-PC-Online-v1.0.1-windows.zip` from
+1. Download `CTR-NitroFueled-PC-Online-v1.0.2-windows.zip` from
    [Releases](../../releases/latest) and unzip it anywhere.
 2. Open **`CTR-NitroFueled-PC.exe`**. In **ADVANCED**, choose your base game folder
    (CUSA14876 Europe or CUSA13795 USA) and your 1.21 update folder, then **Prepare the game**.
@@ -83,7 +83,7 @@ MSYS2 CLANG64, as in [packaging/windows/README.md](packaging/windows/README.md):
 ```bash
 git clone --recursive <this repository>
 bash build.sh
-python packaging/windows/make_portable.py --version v1.0.1 --name CTR-NitroFueled-PC-Online
+python packaging/windows/make_portable.py --version v1.0.2 --name CTR-NitroFueled-PC-Online
 ```
 
 What this edition adds to the CTR-NitroFueled-PC tree:
@@ -141,7 +141,7 @@ The original CTR-NitroFueled-PC README is kept in [docs/UPSTREAM_README.md](docs
 
 ### التحميل والتشغيل
 
-1. حمّل الملف `CTR-NitroFueled-PC-Online-v1.0.1-windows.zip` من صفحة [Releases](../../releases/latest) وفك ضغطه في أي مكان.
+1. حمّل الملف `CTR-NitroFueled-PC-Online-v1.0.2-windows.zip` من صفحة [Releases](../../releases/latest) وفك ضغطه في أي مكان.
 2. شغّل **`CTR-NitroFueled-PC.exe`**، ومن تبويب **متقدم** اختر مجلد اللعبة الأساسية (CUSA14876 الأوروبية أو CUSA13795 الأمريكية) ومجلد تحديث 1.21، ثم اضغط **تجهيز اللعبة**.
 3. اضغط **العب**.
 
