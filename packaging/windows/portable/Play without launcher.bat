@@ -1,6 +1,6 @@
 @echo off
-rem CTR Nitro-Fueled PC without the launcher (offline; CTR-NitroFueled-PC.exe does the same with
-rem its window, and online play needs it). The merged game goes in .\CUSA14876-1.21 or
+rem CTR Nitro-Fueled PC without the launcher (CTR-NitroFueled-PC.exe does the same with its
+rem window; online play follows bbport.ini online=1 and online_name=). The merged game goes in .\CUSA14876-1.21 or
 rem .\CUSA13795-1.21 (or set BB_GAME_DIR). In-game port menu: Insert, or L3+R3 on the controller.
 setlocal
 cd /d "%~dp0"

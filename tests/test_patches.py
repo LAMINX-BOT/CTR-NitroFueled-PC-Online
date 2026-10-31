@@ -1,9 +1,11 @@
 from paths import ROOT
 import json
+import os
 import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import patches
 from patches import (EBOOT_BASE, GAME_PATCH_KEYS, compile_external, eboot_segments, encode,
@@ -197,6 +199,29 @@ class GamePatchTests(unittest.TestCase):
             elf = tiny_elf(b'\0' * (at - 0x13a9d00) + code + b'\0' * 32, vaddr=0x13a9d00)
             writes = compile_external(selected, eboot_segments(elf), elf)
             self.assertEqual(writes, [(at + 5, bytes.fromhex('41899688040000'))])
+
+    def test_online_key_patch_follows_online(self):
+        # The RyuNET server's key (CrashTeamRacingOnline.xml, EU: CrashTeamRacingOnlineEU.xml)
+        # goes in with online play only, whatever patches.json or the defaults say.
+        online = patches.ONLINE_KEY_PATCH
+        for title_id, file_name in (('CUSA13795', 'CrashTeamRacingOnline.xml'), ('CUSA14876', 'CrashTeamRacingOnlineEU.xml')):
+            found = external_patches(ROOT / 'patches', title_id=title_id)
+            self.assertIn(f'{file_name}/Online: custom Demonware key', [key for key, _, _ in found])
+
+            def selected(ini, environ):
+                with mock.patch.dict('os.environ', environ, clear=False):
+                    if 'BB_ONLINE' not in environ:
+                        os.environ.pop('BB_ONLINE', None)
+                    return [patches.selection_key(key) for key, _, _ in external_selection(found, None, ini)]
+            self.assertNotIn(online, selected({}, {}))
+            self.assertIn(online, selected({'online': '1'}, {}))
+            self.assertIn(online, selected({}, {'BB_ONLINE': '1'}))
+            self.assertNotIn(online, selected({'online': '1'}, {'BB_ONLINE': '0'}))
+            with tempfile.TemporaryDirectory() as tmp:
+                config = Path(tmp) / 'patches.json'
+                config.write_text(json.dumps({'enabled': [online]}))
+                with mock.patch.dict('os.environ', {'BB_ONLINE': '0'}):
+                    self.assertEqual(external_selection(found, config, {}), [])
 
     def test_read_settings(self):
         with tempfile.TemporaryDirectory() as tmp:

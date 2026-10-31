@@ -5,7 +5,7 @@
 <h1 align="center">CTR Nitro-Fueled PC — Online Edition</h1>
 
 <p align="center">
-  <b>Crash Team Racing Nitro-Fueled (PS4) running natively on Windows, with online play and no central server.</b><br>
+  <b>Crash Team Racing Nitro-Fueled (PS4) running natively on Windows, with online play on the RyuNET community server.</b><br>
   <a href="#english">English</a> · <a href="#العربية">العربية</a> ·
   <a href="../../releases/latest"><b>Download / تحميل</b></a>
 </p>
@@ -26,15 +26,16 @@
 
 ### What this is
 
-This project joins two existing open-source ports of the game, giving full credit to both:
+This project joins existing open-source ports of the game, giving full credit to each:
 
 | Project | Author | What it brings here |
 |---|---|---|
 | [**CTR-NitroFueled-PC**](https://github.com/GetLostIn/CTR-NitroFueled-PC) | [**GetLostIn**](https://github.com/GetLostIn) | The base: the native runtime, the Vulkan renderer, the performance, DLSS / FSR 1 / FSR 3 / FSR 4, frame generation, ultrawide, controllers, patches, saves, DLC, trophies and every launcher feature. |
-| [**CTRNativePorted**](https://github.com/guzuold/CTRNativePorted) | [**guzuold**](https://github.com/guzuold) | Online play without a central server: the local online service, friends and friend codes, invitations and JOIN, public matchmaking, the Pit Stop economy, and the "Nitro Cinema" launcher design this launcher follows. |
+| [**OCTR-NitroFueled-PC**](https://github.com/Ryu7w7/OCTR-NitroFueled-PC) | [**Ryu7w7**](https://github.com/Ryu7w7) | Online play on the RyuNET community server: the game's network, HTTP, PSN and WebApi functions, public matches, private rooms, friends and invitations, the server tunnel, nicknames kept by a key, and the Pit Stop. |
+| [**CTRNativePorted**](https://github.com/guzuold/CTRNativePorted) | [**guzuold**](https://github.com/guzuold) | The "Nitro Cinema" launcher design this launcher follows (its serverless online play was in v1.0). |
 
 The online code runs on CTR-NitroFueled-PC's runtime and renderer, which are unchanged, so the
-game keeps that port's performance. With online play off, nothing of it is even loaded.
+game keeps that port's performance. With online play off, none of it is used.
 
 ### Features
 
@@ -46,12 +47,14 @@ game keeps that port's performance. With online play off, nothing of it is even 
 - Xbox / PlayStation / SDL controllers and keyboard, live controller test, button remapping, split screen.
 - Community patches, save backups and imports, optional DLC, the 48 trophies.
 
-**Online** (from CTRNativePorted)
-- Each player's launcher runs its own online service; services find each other on the BitTorrent DHT.
-- Add friends by code, see their presence, invite them or JOIN them from the game's own friends list.
-- Public matchmaking (*Online > Matchmaking*); the hub is elected automatically.
-- Race traffic goes directly between the players' games.
-- **Compatible with CTRNativePorted players**: same friend codes, friends and matchmaking.
+**Online** (from OCTR-NitroFueled-PC)
+- The RyuNET community server (`octr.ryu7w7.xyz`, or your own): public matches, alone or with your
+  group, and private rooms, from the game's own menus.
+- Friends by nickname (the launcher's FRIENDS drawer), shown in the game's friends list; invite them
+  or join their room.
+- Race traffic goes directly between the players' games, with the server's tunnel for players who
+  cannot reach each other; the Pit Stop with the server's items or your save's.
+- **Compatible with OCTR players** on the same server.
 - Sony and Activision servers are never contacted.
 
 **This edition**
@@ -69,12 +72,12 @@ game keeps that port's performance. With online play off, nothing of it is even 
    (CUSA14876 Europe or CUSA13795 USA) and your 1.21 update folder, then **Prepare the game**.
 3. Press **PLAY**.
 
-**Online:** SETTINGS → *ONLINE & MULTI* → turn on **Multiplayer Online** and choose a player name.
-Open **FRIENDS** (top right), **COPY MY CODE**, send it to a friend and add theirs: you must add each
-other. Then invite or join from the game. Details: [ONLINE.md](packaging/windows/portable/ONLINE.md).
+**Online:** SETTINGS → *ONLINE & MULTI* → turn on **Multiplayer Online** and choose your own
+nickname (the launcher registers it for this PC; `ryunet_online.key` keeps it: never share that
+file). Add friends by nickname under **FRIENDS** (top right), then race, invite or join from the
+game. Details: [ONLINE.md](packaging/windows/portable/ONLINE.md).
 
 Requirements: Windows 10/11 64-bit, a Vulkan 1.3 GPU, your own decrypted dump with the 1.21 update.
-Only one online launcher per PC at a time (CTRNativePorted uses the same ports).
 
 ### Building from source
 
@@ -87,11 +90,12 @@ python packaging/windows/make_portable.py --version v1.0.2 --name CTR-NitroFuele
 ```
 
 What this edition adds to the CTR-NitroFueled-PC tree:
-- `online/` — CTRNativePorted's online service (`online_server/`), guest functions (`hle/`, built as
-  `ctr_online.dll`) and DHT (`dht/`), with the changes needed to build them with clang/MinGW.
-- `src/runtime_online.c` — binds those functions, only when online is on, and installs the online
-  service's traffic key in memory.
-- `launcher/windows/` — the new launcher (`online.cpp`, `arabic.cpp`, the Nitro look in `launcher.cpp`).
+- `src/runtime_net*.c`, `runtime_http.c`, `runtime_np_online.c`, `runtime_friends.c` — OCTR's online
+  runtime; `src/runtime_ryunet.c` — its system services, bound only when online is on
+  (`runtime_net_resolve`); `run.py setup_online` and `patches/CrashTeamRacingOnline*.xml` — the
+  nickname, the key and the server's Demonware key.
+- `launcher/windows/` — the new launcher (`online.cpp`, the RyuNET client; `arabic.cpp`; the Nitro
+  look in `launcher.cpp`).
 - `gpu/patches/imgui/` — an optional text-shaping hook for Arabic (unused by the in-game overlay).
 - `tools/arabic_presentation_forms.py` — prepares the Arabic font.
 
@@ -111,10 +115,11 @@ The original CTR-NitroFueled-PC README is kept in [docs/UPSTREAM_README.md](docs
 | المشروع | صاحبه | ما أُخذ منه |
 |---|---|---|
 | [**CTR-NitroFueled-PC**](https://github.com/GetLostIn/CTR-NitroFueled-PC) | [**GetLostIn**](https://github.com/GetLostIn) | الأساس كله: تشغيل اللعبة بشكل أصلي، والرندر بـ Vulkan، والأداء الممتاز، و DLSS و FSR 1 و FSR 3 و FSR 4، وتوليد الإطارات، و UltraWide، وأيادي التحكم، والباتشات، والحفظ، و DLC، والكؤوس، وكل ميزات المشغل. |
-| [**CTRNativePorted**](https://github.com/guzuold/CTRNativePorted) | [**guzuold**](https://github.com/guzuold) | اللعب الأونلاين بدون سيرفر مركزي: خدمة الأونلاين المحلية، والأصدقاء وأكوادهم، والدعوات والانضمام (JOIN)، والـ Matchmaking العام، ومتجر Pit Stop، وتصميم واجهة "Nitro Cinema" التي تتبعها هذه الواجهة. |
+| [**OCTR-NitroFueled-PC**](https://github.com/Ryu7w7/OCTR-NitroFueled-PC) | [**Ryu7w7**](https://github.com/Ryu7w7) | اللعب الأونلاين على سيرفر RyuNET المجتمعي: دوال الشبكة و HTTP و PSN داخل اللعبة، والسباقات العامة، والغرف الخاصة، والأصدقاء والدعوات، ونفق السيرفر، والأسماء المحفوظة بمفتاح، ومتجر Pit Stop. |
+| [**CTRNativePorted**](https://github.com/guzuold/CTRNativePorted) | [**guzuold**](https://github.com/guzuold) | تصميم واجهة "Nitro Cinema" التي تتبعها هذه الواجهة (وكان اللعب الأونلاين بدون سيرفر منه في الإصدار 1.0). |
 
 كود الأونلاين يعمل فوق محرك CTR-NitroFueled-PC دون تغيير المحرك، لذلك تحتفظ اللعبة بنفس الأداء.
-وعند إيقاف الأونلاين لا يُحمَّل كود الأونلاين أصلاً.
+وعند إيقاف الأونلاين لا يُستخدم كود الأونلاين أصلاً.
 
 ### المزايا
 
@@ -126,12 +131,11 @@ The original CTR-NitroFueled-PC README is kept in [docs/UPSTREAM_README.md](docs
 - أيادي Xbox و PlayStation و SDL ولوحة المفاتيح، مع تجربة اليد مباشرة وتغيير الأزرار والشاشة المقسومة.
 - باتشات المجتمع، ونسخ الحفظ احتياطياً واستيراده، و DLC اختياري، والكؤوس الـ 48.
 
-**الأونلاين** (من CTRNativePorted)
-- كل لاعب يشغّل خدمة أونلاين خاصة به داخل المشغل، والخدمات تجد بعضها عبر شبكة BitTorrent DHT.
-- أضف أصدقاءك بالكود، وشاهد حالتهم، وادعُهم أو انضم إليهم من قائمة الأصدقاء داخل اللعبة.
-- Matchmaking عام (*Online > Matchmaking*)، والمضيف يُختار تلقائياً.
-- بيانات السباق تنتقل مباشرة بين أجهزة اللاعبين.
-- **متوافق مع لاعبي CTRNativePorted**: نفس الأكواد والأصدقاء والـ Matchmaking.
+**الأونلاين** (من OCTR-NitroFueled-PC)
+- سيرفر RyuNET المجتمعي (`octr.ryu7w7.xyz` أو سيرفرك الخاص): سباقات عامة وحدك أو مع مجموعتك، وغرف خاصة، من قوائم اللعبة نفسها.
+- أضف أصدقاءك باسمهم أونلاين (درج الأصدقاء في المشغل)، وتظهر قائمتهم داخل اللعبة؛ ادعُهم أو انضم إلى غرفتهم.
+- بيانات السباق تنتقل مباشرة بين أجهزة اللاعبين، مع نفق السيرفر لمن لا يصلون لبعضهم؛ ومتجر Pit Stop بعناصر السيرفر أو عناصر ملف حفظك.
+- **متوافق مع لاعبي OCTR** على نفس السيرفر.
 - لا يتم الاتصال أبداً بسيرفرات Sony أو Activision.
 
 **هذه النسخة**
@@ -145,12 +149,11 @@ The original CTR-NitroFueled-PC README is kept in [docs/UPSTREAM_README.md](docs
 2. شغّل **`CTR-NitroFueled-PC.exe`**، ومن تبويب **متقدم** اختر مجلد اللعبة الأساسية (CUSA14876 الأوروبية أو CUSA13795 الأمريكية) ومجلد تحديث 1.21، ثم اضغط **تجهيز اللعبة**.
 3. اضغط **العب**.
 
-**الأونلاين:** الإعدادات ← بطاقة *الأونلاين واللعب الجماعي* ← فعّل **اللعب الأونلاين** واكتب اسم اللاعب.
-افتح **الأصدقاء** (أعلى اليمين) ← **نسخ كودي** وأرسله لصديقك وأضف كوده: يجب أن يضيف كل منكما الآخر.
-بعدها ادعُه أو انضم إليه من داخل اللعبة. التفاصيل في [README-AR.txt](packaging/windows/portable/README-AR.txt).
+**الأونلاين:** الإعدادات ← بطاقة *الأونلاين واللعب الجماعي* ← فعّل **اللعب الأونلاين** واكتب اسمك الخاص
+(يسجّله المشغل لهذا الجهاز، والملف `ryunet_online.key` يحفظه: لا تشاركه أبداً). أضف أصدقاءك بأسمائهم من
+**الأصدقاء** (أعلى اليمين)، ثم سابق أو ادعُهم أو انضم إليهم من داخل اللعبة. التفاصيل في [README-AR.txt](packaging/windows/portable/README-AR.txt).
 
 المتطلبات: ويندوز 10 أو 11 (64 بت)، وكرت شاشة يدعم Vulkan 1.3، ونسختك الخاصة من اللعبة مع تحديث 1.21.
-لا تشغّل مشغّلَين أونلاين في نفس الوقت على نفس الجهاز (CTRNativePorted يستخدم نفس المنافذ).
 
 </div>
 
@@ -161,13 +164,13 @@ The original CTR-NitroFueled-PC README is kept in [docs/UPSTREAM_README.md](docs
 This project exists thanks to / هذا المشروع موجود بفضل:
 
 - **[GetLostIn](https://github.com/GetLostIn)** — [CTR-NitroFueled-PC](https://github.com/GetLostIn/CTR-NitroFueled-PC), the Windows port this project is built on (made with Claude, Anthropic).
-- **[guzuold](https://github.com/guzuold)** — [CTRNativePorted](https://github.com/guzuold/CTRNativePorted): the serverless online play and the Nitro Cinema launcher design (implemented and reviewed with Claude, OpenAI Codex and Gemini).
+- **[Ryu7w7](https://github.com/Ryu7w7)** and the OCTR contributors — [OCTR-NitroFueled-PC](https://github.com/Ryu7w7/OCTR-NitroFueled-PC): the online play and the [RyuNET](https://github.com/Ryu7w7/ryunet-demonware-ctr) server.
+- **[guzuold](https://github.com/guzuold)** — [CTRNativePorted](https://github.com/guzuold/CTRNativePorted): the Nitro Cinema launcher design (implemented and reviewed with Claude, OpenAI Codex and Gemini).
 - **[T3CHNOLOG1C](https://github.com/T3CHNOLOG1C)** — [SacredFire](https://github.com/T3CHNOLOG1C/SacredFire), the native CTR Nitro-Fueled port CTR-NitroFueled-PC forks.
 - **[deadinside28](https://github.com/deadinside28)** — [bbport](https://github.com/deadinside28/bloodborne_pc); **[Supermedo](https://github.com/Supermedo)** — its Windows port.
 - **[shadPS4](https://github.com/shadps4-emu/shadPS4)** — the video core and shader recompiler.
 - **[IFreemz](https://github.com/IFreemz)** — the DLSS bridge; **[FireBurn/FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)** — AMD FSR 3.1 / 4 on Vulkan.
 - **illusion** and **TroyWarez** — the game patches; **tcosi** — ultrawide; **martijnhe** — the European edition; **MetaHeart**, **Naif Alqurashi**.
-- **[jech/dht](https://github.com/jech/dht)** (MIT) — the BitTorrent DHT.
 - Fonts: **Luckiest Guy** by Astigmatic (Apache-2.0), **Lemonada** by the Lemonada Project Authors (OFL-1.1, modified as "Lemonada CTR").
 - NVIDIA DLSS SDK (`nvngx_dlss.dll`, redistributed under its license). NVIDIA, DLSS and GeForce RTX are trademarks of NVIDIA Corporation.
 - The launcher's background and logo are official *Crash Team Racing Nitro-Fueled* artwork © Activision Publishing, Inc., used only to identify the game; they are not covered by this project's license.
@@ -175,8 +178,7 @@ This project exists thanks to / هذا المشروع موجود بفضل:
 ## License / الرخصة
 
 GNU General Public License **version 2** ([LICENSE](LICENSE)). CTR-NitroFueled-PC and its sources are
-GPL-2.0-or-later; CTRNativePorted's code in `online/` is GPL-2.0-only
-([online/LICENSE.CTRNativePorted](online/LICENSE.CTRNativePorted)), so the combined program is
+GPL-2.0-or-later; OCTR-NitroFueled-PC's online code is GPL-2.0, so the combined program is
 distributed under GPL-2.0. Third-party licenses are in the package's `licenses\` folder and
 its `THIRD-PARTY.txt`.
 

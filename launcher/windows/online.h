@@ -1,54 +1,51 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Online play in the launcher: this PC's online service (online/online_server, from
-// guzuold/CTRNativePorted) runs inside the launcher while Multiplayer Online is on, as in
-// CTRNativePorted's launcher. Its files are <port>\runtime\user\{identity,online}, the same
-// layout, so an identity and friends list copied from CTRNativePorted keep their friend code.
-// A separate translation unit: the service needs Winsock 2 before <windows.h>.
+// Online play in the launcher: a client of the RyuNET community server (from
+// Ryu7w7/OCTR-NitroFueled-PC). While Multiplayer Online is on, a background thread checks that
+// the server answers and that the nickname belongs to this installation (claiming it when it is
+// free), and keeps the RyuNET friends list. The game itself is set up by run.py (setup_online)
+// from bbport.ini's online, online_name and online_server.
+// This installation's key is <port>\ryunet_online.key (with a copy in
+// %APPDATA%\CTR-NitroFueled-PC), shared with run.py: requests are signed with its hash for the
+// server and the key never leaves the PC.
 #pragma once
 #include <filesystem>
-#include <map>
 #include <string>
 #include <vector>
 
 namespace launcher_online {
 
+constexpr const char* kDefaultServer = "octr.ryu7w7.xyz";
+
 struct Friend {
-    std::string code;
-    std::string label;      // the online ID the friend's service reported, else the nickname
-    bool online = false;    // the friend's service answered
-    bool in_game = false;   // and its game is connected to it
-    bool named = false;     // the friend's service ever answered (they added this PC's code)
+    std::string name;
+    bool online = false;    // signed in to the server
+    bool in_room = false;   // in a room with other players
+    bool incoming = false;  // asked to be friends: accept or decline
+    bool outgoing = false;  // this player asked them; waiting for their answer
 };
 
 struct Status {
-    bool running = false;   // the service is up
-    bool busy = false;      // starting or stopping in the background
-    std::string error;      // why it could not start
-    std::string friend_code;
-    std::string public_ip, address_source;
-    bool upnp_router = false;
+    bool running = false;   // the server answered and the nickname is this installation's
+    bool busy = false;      // asking the server
+    std::string error;      // why not (English; the launcher translates the known ones)
 };
 
-// Starts or stops the service in the background (UPnP discovery takes a few seconds).
-void Start(const std::filesystem::path& root, const std::string& player_name);
+// Starts or stops the background checks (Restart: another nickname or server).
+void Start(const std::filesystem::path& root, const std::string& server, const std::string& nickname);
 void Stop();
-// Stop, then start again (the player name changed).
-void Restart(const std::filesystem::path& root, const std::string& player_name);
-// Stops the service and waits (launcher exit).
+void Restart(const std::filesystem::path& root, const std::string& server, const std::string& nickname);
+// Stops and waits (launcher exit).
 void Shutdown();
 Status GetStatus();
-// The friends list with live presence, in-game first.
-std::vector<Friend> Friends(const std::filesystem::path& root);
-// This PC's friend code (the identity is created on first use).
-std::string OwnCode(const std::filesystem::path& root);
-// "" when added, else the reason (in English; the caller translates the known ones).
-std::string AddFriend(const std::filesystem::path& root, const std::string& code);
-void RemoveFriend(const std::filesystem::path& root, const std::string& code);
-// The game's environment for an online start (CTR_ONLINE=1 and the rest), after verifying
-// this PC's service and saving its traffic key. False with the reason when it cannot start.
-bool PrepareLaunch(const std::filesystem::path& root, const std::string& player_name,
-                   std::map<std::wstring, std::wstring>& env, std::string& error);
-// 3-16 letters, digits, '-' or '_' (the game's online ID rules).
+// The friends and the requests, from the last answer: online first.
+std::vector<Friend> Friends();
+// Sent in the background: request (to who), accept and decline (from who), remove.
+void FriendAction(const std::string& action, const std::string& who);
+// The server's word for the last action ("sent", "friends", "removed", "unknown", ...), and who.
+std::string LastResult(std::string* who = nullptr);
+// "" when the game can start online, else the reason (English).
+std::string PrepareLaunch();
+// 3-16 letters, digits, '-' or '_', and not a name many players share (Player, Guest, ...).
 bool ValidPlayerName(const std::string& name);
 
 } // namespace launcher_online

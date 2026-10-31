@@ -262,7 +262,7 @@ if (WIN32)
     target_compile_definitions(ctr-launcher PRIVATE UNICODE _UNICODE)
     target_link_options(ctr-launcher PRIVATE -static -municode -s)
     target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt
-        ctr_online_service)
+        winhttp)
     set_target_properties(ctr-launcher PROPERTIES OUTPUT_NAME CTR-NitroFueled-PC INTERPROCEDURAL_OPTIMIZATION OFF)
     # The launcher's file operations from the command line (--import, --restore, --merge, ...).
     add_executable(ctr-launcher-selftest EXCLUDE_FROM_ALL $<TARGET_PROPERTY:ctr-launcher,SOURCES>)
@@ -270,43 +270,25 @@ if (WIN32)
     target_compile_definitions(ctr-launcher-selftest PRIVATE UNICODE _UNICODE LAUNCHER_SELFTEST)
     target_link_options(ctr-launcher-selftest PRIVATE -static -municode)
     target_link_libraries(ctr-launcher-selftest PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt
-        ctr_online_service)
+        winhttp)
 
-    # Online play (online/, from guzuold/CTRNativePorted, GPL-2.0): ctr_online.dll holds the
-    # guest NP, Net, Http and WebApi functions; sacredfire.exe loads it only with CTR_ONLINE=1
-    # (src/runtime_online.c). The launcher hosts the online service (online/online_server).
-    file(GLOB CTR_ONLINE_HLE CONFIGURE_DEPENDS ../online/hle/*.cpp)
-    add_library(ctr_online SHARED ${CTR_ONLINE_HLE} ../online/online_server/json.cpp)
-    target_compile_definitions(ctr_online PRIVATE CTR_HLE_BUILD WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_compile_options(ctr_online PRIVATE -Wno-unknown-pragmas)
-    target_link_options(ctr_online PRIVATE -static -s)
-    target_link_libraries(ctr_online PRIVATE ws2_32 iphlpapi user32 gdi32 gdiplus shlwapi bcrypt crypt32)
-    set_target_properties(ctr_online PROPERTIES PREFIX "" INTERPROCEDURAL_OPTIMIZATION OFF)
-    set(CTR_ONLINE_SERVICE ../online/online_server/json.cpp ../online/online_server/crypto.cpp
-        ../online/online_server/protocol.cpp ../online/online_server/stores.cpp ../online/online_server/relay.cpp
-        ../online/online_server/server.cpp ../online/online_server/upnp.cpp ../online/online_server/launcher_online.cpp
-        ../online/online_server/friend_identity.cpp ../online/online_server/dht_service.cpp
-        ../online/online_server/friend_verifier.cpp ../online/online_server/friend_store.cpp
-        ../online/online_server/party_lobby.cpp ../online/online_server/friend_network.cpp ../online/dht/dht.c)
-    add_library(ctr_online_service STATIC ${CTR_ONLINE_SERVICE})
-    target_compile_definitions(ctr_online_service PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_compile_options(ctr_online_service PRIVATE -Wno-unknown-pragmas -w)
-    target_include_directories(ctr_online_service PUBLIC ../online/online_server)
-    target_link_libraries(ctr_online_service PUBLIC ws2_32 iphlpapi bcrypt crypt32 ole32 oleaut32)
-    set_target_properties(ctr_online_service PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
-    # The same service on its own (diagnostics, a dedicated always-on host).
-    add_executable(ctr_online_server ../online/online_server/server_main.cpp)
-    target_link_libraries(ctr_online_server PRIVATE ctr_online_service)
-    target_link_options(ctr_online_server PRIVATE -static -s)
-    # The upstream online test suites, unchanged (run from a folder holding
-    # build/CTRPort-gpu/ctr_hle.dll, a copy of ctr_online.dll).
-    add_executable(online-server-test EXCLUDE_FROM_ALL ../online/online_server/server_test.cpp)
-    target_link_libraries(online-server-test PRIVATE ctr_online_service)
-    target_compile_options(online-server-test PRIVATE -w)
-    add_executable(online-hle-test EXCLUDE_FROM_ALL ../online/hle_tests/online_services_test.cpp)
-    target_compile_definitions(online-hle-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_compile_options(online-hle-test PRIVATE -w)
-    target_link_libraries(online-hle-test PRIVATE ws2_32 crypt32 bcrypt)
+    # Online play on a RyuNET server (from Ryu7w7/OCTR-NitroFueled-PC, GPL-2.0): src/runtime_net*.c,
+    # runtime_http.c, runtime_np_online.c, runtime_friends.c and runtime_ryunet.c are in
+    # sacredfire.exe (on with BB_ONLINE=1). Their tests, run by tests/test_online_runtime.py.
+    add_executable(net-tunnel-test EXCLUDE_FROM_ALL ../tests/test_net_tunnel.c ../src/runtime_net_tunnel.c)
+    target_include_directories(net-tunnel-test PRIVATE ../src)
+    target_link_libraries(net-tunnel-test PRIVATE ws2_32)
+    add_executable(net-ping-test EXCLUDE_FROM_ALL ../tests/test_net_ping.c ../src/runtime_net_ping.c)
+    target_include_directories(net-ping-test PRIVATE ../src)
+    target_link_libraries(net-ping-test PRIVATE ws2_32)
+    add_executable(http-ryunet-test EXCLUDE_FROM_ALL ../tests/test_http_ryunet.c ../src/runtime_http.c)
+    target_compile_definitions(http-ryunet-test PRIVATE _GNU_SOURCE)
+    target_include_directories(http-ryunet-test PRIVATE ../src)
+    target_link_libraries(http-ryunet-test PRIVATE ws2_32 bcrypt -pthread)
+    # The launcher's RyuNET client (launcher/windows/online.cpp) against a local fake server.
+    add_executable(launcher-online-test EXCLUDE_FROM_ALL ../tests/test_launcher_online.cpp ../launcher/windows/online.cpp)
+    target_compile_definitions(launcher-online-test PRIVATE UNICODE _UNICODE)
+    target_link_libraries(launcher-online-test PRIVATE winhttp bcrypt ws2_32)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.

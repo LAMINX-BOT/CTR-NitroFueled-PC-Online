@@ -218,10 +218,9 @@ def main():
             if not f.is_file():
                 sys.exit(f'{f} not found')
     exe, caps = ROOT / 'out' / 'sacredfire.exe', ROOT / 'out' / 'bb-gpu-capabilities.exe'
-    # Online play (online/): the guest functions and the standalone service.
-    online = [ROOT / 'out' / 'ctr_online.dll', ROOT / 'out' / 'ctr_online_server.exe']
+    # Online play (a RyuNET server, src/runtime_net*.c) is inside sacredfire.exe.
     launcher = ROOT / 'out' / LAUNCHER
-    for f in (exe, caps, launcher, *online):
+    for f in (exe, caps, launcher):
         if not f.is_file():
             sys.exit(f'{f} not found: build with build.sh first')
     folder = a.dist / a.name
@@ -234,13 +233,11 @@ def main():
     shutil.copy2(caps, folder / 'bin')
     version = a.version and f'{a.version}-windows' or (ROOT / 'out' / 'VERSION').read_text().strip()
     (folder / 'bin' / 'VERSION').write_text(version + '\n')
-    for f in online:
-        shutil.copy2(f, folder / 'bin')
     # RelWithDebInfo keeps DWARF in sacredfire.exe (about 125 MB of the 140). The package drops it:
     # the code and data sections are the same bytes, crash reports still name exe+offset.
     for f in (folder / 'bin' / 'sacredfire.exe', folder / 'bin' / 'bb-gpu-capabilities.exe'):
         subprocess.run([str(CLANG_BIN / 'llvm-strip.exe'), '--strip-debug', str(f)], check=True)
-    dlls = closure([exe, caps, *online])
+    dlls = closure([exe, caps])
     for path in dlls.values():
         shutil.copy2(path, folder / 'bin')
     if dlss_files:
@@ -260,8 +257,6 @@ def main():
     # The launcher's artwork and display font (replaceable; assets/launcher/README.md).
     shutil.copytree(ROOT / 'launcher' / 'windows' / 'assets', folder / 'assets', dirs_exist_ok=True)
     (folder / 'licenses').mkdir(exist_ok=True)
-    shutil.copy2(ROOT / 'online' / 'LICENSE.CTRNativePorted', folder / 'licenses' / 'CTRNativePorted-LICENSE.txt')
-    shutil.copy2(ROOT / 'online' / 'dht' / 'LICENCE', folder / 'licenses' / 'jech-dht-LICENCE.txt')
     shutil.copy2(ROOT / 'launcher' / 'windows' / 'assets' / 'launcher' / 'LuckiestGuy-LICENSE.txt',
                  folder / 'licenses' / 'LuckiestGuy-LICENSE.txt')
     shutil.copy2(ROOT / 'launcher' / 'windows' / 'assets' / 'launcher' / 'Lemonada-OFL.txt',

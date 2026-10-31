@@ -17,6 +17,7 @@ lists it under "enabled", or when its file marks it isEnabled and patches.json d
 """
 import argparse
 import json
+import os
 import re
 import struct
 import sys
@@ -33,14 +34,18 @@ GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
                  'patch_no_motion_blur':'CrashTeamRacing.xml/Disable Motion Blur',
                  'patch_pro_1080p':'CrashTeamRacing.xml/Resolution Patch (1080p for PS4 Pro)'}
 # The bundled files of other editions (the EU one, CUSA14876): their patches are selected under
-# CrashTeamRacing.xml's keys, so the menu switches and patches.json work for both.
-BUNDLED_FILES=('CrashTeamRacingEU.xml',)
+# the USA files' keys, so the menu switches and patches.json work for both.
+BUNDLED_FILES={'CrashTeamRacingEU.xml':'CrashTeamRacing.xml',
+               'CrashTeamRacingOnlineEU.xml':'CrashTeamRacingOnline.xml'}
+# Online on a RyuNET server (BB_ONLINE=1, run.py setup_online; from Ryu7w7/OCTR-NitroFueled-PC):
+# the server's RSA-2048 key in place of Demonware's, which the game checks its auth replies with.
+ONLINE_KEY_PATCH='CrashTeamRacingOnline.xml/Online: custom Demonware key'
 
 
 def selection_key(key):
-    """key as the menu and patches.json name it (an edition's bundled file as CrashTeamRacing.xml)."""
+    """key as the menu and patches.json name it (an edition's bundled file as the USA one)."""
     name,sep,patch=key.partition('/')
-    return 'CrashTeamRacing.xml/'+patch if sep and name in BUNDLED_FILES else key
+    return BUNDLED_FILES[name]+'/'+patch if sep and name in BUNDLED_FILES else key
 
 
 # bbport.ini render_res: the scene size the game renders in PS4 Pro mode (run.py turns the Pro
@@ -216,6 +221,11 @@ def external_selection(found, config, ini=None):
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
     for key,patch in GAME_PATCH_KEYS.items():
         if (ini or {}).get(key)=='1': enabled.add(patch); disabled.discard(patch)
+    # The online key patch goes with online play only, whatever patches.json says.
+    if os.environ.get('BB_ONLINE', (ini or {}).get('online', '0'))=='1':
+        enabled.add(ONLINE_KEY_PATCH); disabled.discard(ONLINE_KEY_PATCH)
+    else:
+        enabled.discard(ONLINE_KEY_PATCH); disabled.add(ONLINE_KEY_PATCH)
     # The 1080p Pro patch follows render_res (Settings > Internal resolution, the in-game menu).
     pro_1080p=GAME_PATCH_KEYS['patch_pro_1080p']
     # With render_res the Pro mode follows it (run.py): 1080p runs the base PS4 path, so the

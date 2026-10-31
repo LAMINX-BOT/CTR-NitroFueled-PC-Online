@@ -29,12 +29,12 @@ MINGW*|MSYS*)
     cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO=off \
         -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}"
-    if ! ninja -C out/gpu sacredfire bb-gpu-capabilities ctr-launcher ctr_online ctr_online_server > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu sacredfire bb-gpu-capabilities ctr-launcher > out/gpu-build.log 2>&1; then
         grep -v '^\[' out/gpu-build.log | tail -40 >&2
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/sacredfire.exe out/gpu/bb-gpu-capabilities.exe out/gpu/CTR-NitroFueled-PC.exe out/gpu/ctr_online.dll \
-       out/gpu/ctr_online_server.exe out/
+    cp out/gpu/sacredfire.exe out/gpu/bb-gpu-capabilities.exe out/gpu/CTR-NitroFueled-PC.exe out/
+    rm -f out/ctr_online.dll out/ctr_online_server.exe  # the online play of v1.0 (CTRNativePorted)
     version=$(git describe --tags --match 'v*' --always 2>/dev/null || echo unknown)
     printf '%s-windows\n' "$version" > out/VERSION
     echo "Built $PWD/out/sacredfire.exe ($(cat out/VERSION))"
@@ -142,9 +142,14 @@ if [[ ${1:-} == --test ]]; then
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
     out/content-test --addons
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_net.c -o out/net-test
-    out/net-test --offline
-    out/net-test
+    # Online play on a RyuNET server (Ryu7w7/OCTR-NitroFueled-PC): the tunnel, the pings and the
+    # signed requests (Windows: the net-tunnel-test, net-ping-test and http-ryunet-test targets).
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_net_tunnel.c src/runtime_net_tunnel.c -o out/net-tunnel-test
+    out/net-tunnel-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_net_ping.c src/runtime_net_ping.c -o out/net-ping-test
+    out/net-ping-test
+    "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_http_ryunet.c src/runtime_http.c -o out/http-ryunet-test
+    out/http-ryunet-test > /dev/null
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_eventflag.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/eventflag-test
     out/eventflag-test
 fi

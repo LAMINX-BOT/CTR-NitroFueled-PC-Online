@@ -656,7 +656,7 @@ int main(int argc, char **argv) {
         if (sfo_value(sfo,"INSTALL_DIR_SAVEDATA",id,sizeof(id),NULL) || sfo_value(sfo,"TITLE_ID",id,sizeof(id),NULL))
             runtime_savedata_configure(id);
         char title[16]="";
-        if (sfo_value(sfo,"TITLE_ID",title,sizeof(title),NULL)) runtime_trophy_configure(title);
+        if (sfo_value(sfo,"TITLE_ID",title,sizeof(title),NULL)) { runtime_trophy_configure(title); runtime_np_set_title(title); }
     }
     bbgpu_register_kernel();
 #ifdef _WIN32

@@ -715,6 +715,7 @@ App g_app;
 
 // Online (online.h; the Nitro look's code further down).
 bool OnlineOn();
+std::string OnlineServer();
 std::string PlayerName();
 std::string OnlineText(const std::string& english);
 
@@ -917,11 +918,10 @@ void SetEnv(const wchar_t* name, const std::string& value) {
 void StartGame() {
     App& a = g_app;
     if (!a.python || a.game_running) return;
-    // Multiplayer Online: this PC's service, verified, and its key for the game (runtime_online.c).
-    std::map<std::wstring, std::wstring> online_env;
+    // Multiplayer Online: the RyuNET server answered and the nickname is this installation's;
+    // run.py sets the game up from bbport.ini (online, online_name, online_server).
     if (OnlineOn()) {
-        std::string error;
-        if (!launcher_online::PrepareLaunch(a.root, PlayerName(), online_env, error)) {
+        if (const std::string error = launcher_online::PrepareLaunch(); !error.empty()) {
             a.notice = OnlineText(error);
             return;
         }
@@ -958,21 +958,10 @@ void StartGame() {
     SetEnv(L"BB_DLC", a.launcher.Flag("dlc", true) ? "1" : "0");
     SetEnv(L"BB_DLC_DISABLED", a.launcher.Get("dlc_disabled"));
     SetEnv(L"BB_FULLSCREEN", "");  // bbport.ini's fullscreen= (the menu switch) decides
-    static bool named = false;  // BB_USER_NAME set by an online start of this launcher
-    for (const wchar_t* name : {L"CTR_ONLINE", L"CTR_ONLINE_SERVER", L"CTR_ONLINE_TRAFFIC_KEY", L"CTR_ONLINE_PORT_OFFSET",
-                                L"CTR_ONLINE_ACCOUNT", L"CTR_ONLINE_ID", L"CTR_WUMPA_MULTIPLIER", L"CTR_SYSTEM_LANGUAGE"})
+    // bbport.ini decides online (run.py setup_online sets BB_USER_NAME and the rest).
+    for (const wchar_t* name : {L"BB_ONLINE", L"BB_ONLINE_NAME", L"BB_ONLINE_SERVER", L"BB_ONLINE_HTTP_PORT", L"BB_USER_NAME"})
         SetEnvironmentVariableW(name, nullptr);
-    if (named) SetEnvironmentVariableW(L"BB_USER_NAME", nullptr);
-    named = false;
-    if (!online_env.empty()) {
-        for (const auto& [name, value] : online_env) SetEnvironmentVariableW(name.c_str(), value.c_str());
-        SetEnv(L"CTR_ONLINE_ID", PlayerName());
-        SetEnv(L"BB_USER_NAME", PlayerName());  // the PSN name the game shows (runtime_services.c)
-        named = true;
-        SetEnv(L"CTR_WUMPA_MULTIPLIER", a.launcher.Flag("wumpa_x100", false) ? "100" : "1");
-        SetEnv(L"CTR_SYSTEM_LANGUAGE", GameLanguage());  // the invitation and notice texts
-        AddLog("Online: as " + PlayerName() + " through this PC's online service");
-    }
+    if (OnlineOn()) AddLog("Online: as " + PlayerName() + " on the RyuNET server " + OnlineServer());
     SetEnv(L"PYTHONUTF8", "1");
     SetEnv(L"PYTHONIOENCODING", "utf-8");
 
@@ -1393,7 +1382,9 @@ std::vector<PatchInfo> LoadPatches() {
     std::error_code ec;
     std::vector<fs::path> files;
     for (fs::directory_iterator it(g_app.root / L"patches", ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->path().extension() == L".xml") files.push_back(it->path());
+        // The RyuNET key patches follow Multiplayer Online (scripts/patches.py ONLINE_KEY_PATCH).
+        const std::wstring name = it->path().filename().wstring();
+        if (it->path().extension() == L".xml" && name.rfind(L"CrashTeamRacingOnline", 0) != 0) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end());
     for (const auto& file : files) {
@@ -4093,10 +4084,11 @@ void ToolsTab() {
     Section(T("حول", "About"));
     ImGui::Text("CTR-NitroFueled-PC %s", a.version.c_str());
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(T("نسخة Windows من SacredFire (T3CHNOLOG1C)، مبنية على bbport (deadinside28) ونسخة Windows من Supermedo و shadPS4. الباتشات من illusion و TroyWarez. اللعب الأونلاين من CTRNativePorted (guzuold). غير تابع لـ Sony أو Activision أو Beenox. رخصة GPL v2.",
+    ImGui::TextUnformatted(T("نسخة Windows من SacredFire (T3CHNOLOG1C)، مبنية على bbport (deadinside28) ونسخة Windows من Supermedo و shadPS4. الباتشات من illusion و TroyWarez. اللعب الأونلاين من OCTR-NitroFueled-PC (Ryu7w7) على سيرفر RyuNET، وتصميم الواجهة من CTRNativePorted (guzuold). غير تابع لـ Sony أو Activision أو Beenox. رخصة GPL v2.",
                              "Windows fork of SacredFire (T3CHNOLOG1C), built on bbport (deadinside28), Supermedo's Windows "
-                             "port and shadPS4. Patches by illusion and TroyWarez. Not affiliated with Sony, Activision or "
-                             "Beenox. GPL v2 or later."));
+                             "port and shadPS4. Patches by illusion and TroyWarez. Online play from OCTR-NitroFueled-PC "
+                             "(Ryu7w7) on the RyuNET server; launcher design after CTRNativePorted (guzuold). Not affiliated "
+                             "with Sony, Activision or Beenox. GPL v2."));
     ImGui::Spacing();
     ImGui::TextUnformatted(T("Upscaling زمني: AMD FidelityFX FSR 3.1 (MIT) و NVIDIA DLSS. يستخدم DLSS حزمة NVIDIA DLSS SDK (nvngx_dlss.dll، موزعة بموجب رخصتها، في licenses\\) عبر جسر IFreemz (MIT). NVIDIA و DLSS و GeForce RTX علامات تجارية لـ NVIDIA Corporation.",
                              "Temporal upscaling: AMD FidelityFX FSR 3.1 (MIT) and NVIDIA DLSS. DLSS uses the NVIDIA DLSS "
@@ -4226,30 +4218,49 @@ int g_brand_w = 0, g_brand_h = 0;
 std::vector<ImRect> g_hot;                     // header areas that are buttons (the rest drags)
 float g_header_px = 65.0f;                     // header height in pixels (WM_NCHITTEST)
 
-// Online (online.h): Multiplayer Online, the player name and the friends drawer.
+// Online (online.h): Multiplayer Online on a RyuNET server, the nickname and the friends drawer.
+// bbport.ini online, online_name and online_server, as run.py reads them (launcher.ini's online
+// and online_id from v1.0 are read while bbport.ini has none).
 std::vector<launcher_online::Friend> g_friends;
 ULONGLONG g_friends_at = 0;
 int g_friend_selected = -1;
-char g_friend_code[192] = {};
+char g_friend_code[24] = {};
 char g_player_name[24] = {};
+char g_server_name[128] = {};
 std::string g_friends_notice;
 bool g_friends_notice_error = false;
+std::string g_friends_result;  // the last action's answer already shown
 
-bool OnlineOn() { return g_app.launcher.Flag("online", false); }
+bool OnlineOn() {
+    const std::string on = g_app.game.Get("online");
+    return on.empty() ? g_app.launcher.Flag("online", false) : on == "1";
+}
 std::string PlayerName() {
-    const std::string name = g_app.launcher.Get("online_id", "CTRPlayer");
-    return launcher_online::ValidPlayerName(name) ? name : "CTRPlayer";
+    std::string name = g_app.game.Get("online_name");
+    if (name.empty()) name = g_app.launcher.Get("online_id");
+    return name;
+}
+std::string OnlineServer() {
+    const std::string server = Trim(g_app.game.Get("online_server"));
+    return server.empty() ? launcher_online::kDefaultServer : server;
+}
+void StartOnline() {
+    if (OnlineOn() && launcher_online::ValidPlayerName(PlayerName()))
+        launcher_online::Restart(g_app.root, OnlineServer(), PlayerName());
+    else
+        launcher_online::Stop();
 }
 
 /// Known messages of online.cpp in the launcher's language.
 std::string OnlineText(const std::string& english) {
     struct { const char* en; const char* ar; } static const kTexts[] = {
-        {"Invalid friend code.", "كود الصديق غير صحيح."},
-        {"This is your own code.", "هذا كودك أنت."},
         {"Wait for Online to connect.", "انتظر حتى يتصل الأونلاين."},
-        {"This PC's online service could not be verified.", "تعذّر التحقق من خدمة الأونلاين في هذا الجهاز."},
-        {"server ports are busy (is another online server already running?)",
-         "منافذ الخدمة مشغولة (هل يعمل مشغل أونلاين آخر مثل CTRNativePorted؟)"},
+        {"Could not reach the RyuNET server.", "تعذّر الوصول إلى سيرفر RyuNET."},
+        {"Could not save the online key next to the launcher.", "تعذّر حفظ مفتاح الأونلاين بجانب المشغل."},
+        {"This nickname belongs to another player: choose another.", "هذا الاسم يملكه لاعب آخر: اختر اسماً غيره."},
+        {"That nickname is reserved: choose another.", "هذا الاسم محجوز: اختر اسماً غيره."},
+        {"Invalid nickname.", "اسم غير صالح."},
+        {"Choose your own nickname first (SETTINGS).", "اختر اسمك الخاص أولاً (الإعدادات)."},
         {"Not connected.", "غير متصل."},
     };
     if (!g_arabic) return english;
@@ -4263,11 +4274,34 @@ void RefreshFriends(bool now = false) {
     if (!now && t - g_friends_at < 1500) return;
     g_friends_at = t;
     const std::string selected =
-        g_friend_selected >= 0 && g_friend_selected < int(g_friends.size()) ? g_friends[size_t(g_friend_selected)].code : "";
-    g_friends = launcher_online::Friends(g_app.root);
+        g_friend_selected >= 0 && g_friend_selected < int(g_friends.size()) ? g_friends[size_t(g_friend_selected)].name : "";
+    g_friends = launcher_online::Friends();
     g_friend_selected = -1;
     for (int i = 0; i < int(g_friends.size()); ++i)
-        if (g_friends[size_t(i)].code == selected) g_friend_selected = i;
+        if (g_friends[size_t(i)].name == selected) g_friend_selected = i;
+    // The server's answer to the last request, acceptance or removal, once.
+    std::string who;
+    const std::string result = launcher_online::LastResult(&who);
+    if (!result.empty() && result + "|" + who != g_friends_result) {
+        g_friends_result = result + "|" + who;
+        struct { const char* word; const char* ar; const char* en; bool error; } static const kWords[] = {
+            {"sent", "تم إرسال طلب الصداقة إلى ", "Friend request sent to ", false},
+            {"friends", "أصبحتما صديقين: ", "You are now friends with ", false},
+            {"accepted", "أصبحتما صديقين: ", "You are now friends with ", false},
+            {"declined", "تم رفض طلب ", "Declined the request from ", false},
+            {"removed", "تم حذف ", "Removed ", false},
+            {"unknown", "لا يوجد لاعب بهذا الاسم: ", "No player with this nickname: ", true},
+            {"self", "هذا اسمك أنت: ", "That is your own nickname: ", true},
+            {"already", "الطلب أُرسل من قبل: ", "Already asked: ", false},
+        };
+        g_friends_notice = std::string(T("تعذّر الطلب: ", "The request failed: ")) + result + " (" + who + ")";
+        g_friends_notice_error = true;
+        for (const auto& w : kWords)
+            if (result == w.word) {
+                g_friends_notice = std::string(g_arabic ? w.ar : w.en) + who;
+                g_friends_notice_error = w.error;
+            }
+    }
 }
 
 bool CopyToClipboard(const std::string& text) {
@@ -4557,12 +4591,13 @@ void HomePage() {
     } else if (OnlineOn() && !online.running) {
         status = online.busy ? T("جارٍ الاتصال أونلاين...", "Connecting online...") : T("الأونلاين غير متصل", "Online not connected");
         color = online.busy ? kYellow : kOrange;
-        under = online.busy ? T("جارٍ تشغيل خدمة الأونلاين وفتح الراوتر (UPnP)...", "Opening your online service and the router (UPnP)...")
-                            : OnlineText(online.error);
+        under = online.busy ? std::string(T("جارٍ الاتصال بسيرفر ", "Connecting to ")) + OnlineServer() + "..."
+              : !launcher_online::ValidPlayerName(PlayerName()) ? OnlineText("Choose your own nickname first (SETTINGS).")
+                                                               : OnlineText(online.error);
     } else {
         status = T("جاهز للعب", "Ready to play");
         under = OnlineOn() ? std::string(T("أونلاين باسم ", "Online as ")) + PlayerName() + Sep() +
-                                 T("ادعُ أصدقاءك أو انضم إليهم من داخل اللعبة", "invite or join your friends from the game")
+                                 T("سباقات عامة وغرف خاصة على سيرفر RyuNET", "public races and private rooms on RyuNET")
                            : std::string(T("بدون اتصال", "Offline")) + Sep() + PathText(a.game_dir);
     }
     if (a.show_exit && !a.game_running) {
@@ -4626,37 +4661,35 @@ bool Pills(const char* id, const char* const* labels, int count, int* current, f
     return changed;
 }
 
-/// The Online & Multi card: Multiplayer Online, the player name and the Pit Stop option.
+/// The Online & Multi card: Multiplayer Online, the nickname, the RyuNET server and the Pit Stop.
 void OnlineSettings() {
     App& a = g_app;
     const auto st = launcher_online::GetStatus();
     ImGui::TextColored(kGrey, "%s", T("وضع الشبكة:", "Network mode:"));
     bool on = OnlineOn();
-    ImGui::BeginDisabled(a.game_running || st.busy);
+    ImGui::BeginDisabled(a.game_running);
     if (ToggleSwitch(T("اللعب الأونلاين (Multiplayer Online)", "Multiplayer Online"), &on)) {
-        a.launcher.Set("online", on ? "1" : "0");
-        SaveLauncher();
-        if (on) launcher_online::Start(a.root, PlayerName());
-        else launcher_online::Stop();
+        a.game.Set("online", on ? "1" : "0");
+        SaveGameIni();
+        StartOnline();
     }
     ImGui::EndDisabled();
+    const bool named = launcher_online::ValidPlayerName(PlayerName());
     if (on) {
-        if (st.busy) ImGui::TextColored(kYellow, "%s", T("جارٍ الاتصال...", "Connecting..."));
-        else if (st.running) {
-            ImGui::TextColored(kGreen, "%s  %s", ICON_CHECK, T("أونلاين: خدمتك تعمل", "Online: your service is running"));
-            ImGui::TextColored(kGrey, "%s", st.upnp_router ? T("الراوتر: تم فتح المنافذ عبر UPnP", "Router: ports opened with UPnP")
-                                                           : T("الراوتر بدون UPnP: قد لا يصل إليك الـ Matchmaking العام",
-                                                               "Router without UPnP: public matchmaking may not reach you"));
-        } else {
+        if (!named) ImGui::TextColored(kOrange, "%s", OnlineText("Choose your own nickname first (SETTINGS).").c_str());
+        else if (st.busy) ImGui::TextColored(kYellow, "%s", T("جارٍ الاتصال...", "Connecting..."));
+        else if (st.running)
+            ImGui::TextColored(kGreen, "%s  %s", ICON_CHECK, T("متصل بسيرفر RyuNET", "Connected to the RyuNET server"));
+        else {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(kRed, "%s", OnlineText(st.error.empty() ? "Not connected." : st.error).c_str());
             ImGui::PopTextWrapPos();
-            if (ImGui::SmallButton(T("إعادة المحاولة", "Retry"))) launcher_online::Start(a.root, PlayerName());
+            if (ImGui::SmallButton(T("إعادة المحاولة", "Retry"))) StartOnline();
         }
     }
     ImGui::Spacing();
-    ImGui::TextColored(kGrey, "%s", T("اسم اللاعب:", "Player name:"));
-    if (!g_player_name[0]) std::snprintf(g_player_name, sizeof g_player_name, "%s", a.launcher.Get("online_id", "CTRPlayer").c_str());
+    ImGui::TextColored(kGrey, "%s", T("اسمك أونلاين:", "Online nickname:"));
+    if (!g_player_name[0]) std::snprintf(g_player_name, sizeof g_player_name, "%s", PlayerName().c_str());
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::BeginDisabled(a.game_running);
     ImGui::InputText("##player_name", g_player_name, 17, ImGuiInputTextFlags_CallbackCharFilter,
@@ -4665,32 +4698,50 @@ void OnlineSettings() {
                          return (c < 128 && (std::isalnum(int(c)) || c == '_' || c == '-')) ? 0 : 1;
                      });
     ImGui::EndDisabled();
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        if (launcher_online::ValidPlayerName(g_player_name)) {
-            const bool changed = a.launcher.Get("online_id") != g_player_name;
-            a.launcher.Set("online_id", g_player_name);
-            SaveLauncher();
-            if (changed && OnlineOn() && st.running) launcher_online::Restart(a.root, PlayerName());
-        }
+    if (ImGui::IsItemDeactivatedAfterEdit() && launcher_online::ValidPlayerName(g_player_name) &&
+        PlayerName() != g_player_name) {
+        a.game.Set("online_name", g_player_name);
+        a.game.Set("user_name", g_player_name);
+        SaveGameIni();
+        StartOnline();
     }
     if (!launcher_online::ValidPlayerName(g_player_name))
-        ImGui::TextColored(kRed, "%s", T("من 3 إلى 16 حرفاً إنجليزياً أو رقماً أو - أو _", "3-16 letters, digits, - or _"));
+        ImGui::TextColored(kRed, "%s", T("من 3 إلى 16 حرفاً إنجليزياً أو رقماً أو - أو _ (وليس Player أو Guest)",
+                                         "3-16 letters, digits, - or _ (not Player or Guest)"));
+    ImGui::TextColored(kGrey, "%s", T("السيرفر:", "Server:"));
+    if (!g_server_name[0]) std::snprintf(g_server_name, sizeof g_server_name, "%s", OnlineServer().c_str());
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::BeginDisabled(a.game_running);
+    ImGui::InputText("##server", g_server_name, sizeof g_server_name);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        if (!Trim(g_server_name).size()) std::snprintf(g_server_name, sizeof g_server_name, "%s", launcher_online::kDefaultServer);
+        if (Trim(g_server_name) != OnlineServer()) {
+            a.game.Set("online_server", Trim(g_server_name));
+            SaveGameIni();
+            StartOnline();
+        }
+    }
     ImGui::Spacing();
-    LauncherFlag("wumpa_x100", T("عملات Wumpa ×100", "Wumpa Coins x100"), false,
-                 T("يضاعف عملات Wumpa التي تكسبها أونلاين 100 مرة (متجر Pit Stop يعمل على خدمتك المحلية). الأسعار لا تتغير.",
-                   "Multiplies by 100 the Wumpa Coins you earn online (the Pit Stop runs on your local service). Prices "
-                   "do not change."));
+    bool save_items = a.game.Get("online_inventory") == "save";
+    if (ToggleSwitch(T("متجر Pit Stop: عناصر ملف الحفظ", "Pit Stop: my save's items"), &save_items)) {
+        a.game.Set("online_inventory", save_items ? "save" : "server");
+        SaveGameIni();
+    }
+    HelpMarker(T("أونلاين تُستخدم عناصر Pit Stop التي اشتريتها على السيرفر (مرتبطة باسمك). فعّل هذا لاستخدام العناصر المفتوحة في ملف الحفظ.",
+                 "Online uses the Pit Stop items bought on the server (tied to your nickname). Turn this on to "
+                 "use the items unlocked in your own save instead."));
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(kGrey, "%s", T("بدون سيرفر مركزي: أضف أصدقاءك بالكود من زر الأصدقاء (في الأعلى). متوافق مع CTRNativePorted (نفس الأكواد والـ Matchmaking).",
-                                      "No central server: add friends by code under FRIENDS (top). Works with CTRNativePorted "
-                                      "(same codes and matchmaking)."));
+    ImGui::TextColored(kGrey, "%s", T("سيرفر RyuNET المجتمعي: سباقات عامة وغرف خاصة وأصدقاء ومتجر Pit Stop. اسمك محفوظ لهذا الجهاز في ryunet_online.key: لا تشاركه أبداً.",
+                                      "The RyuNET community server: public races, private rooms, friends and the Pit Stop. "
+                                      "Your nickname is kept for this PC by ryunet_online.key: never share that file."));
     ImGui::PopTextWrapPos();
 }
 
-/// The friends drawer: this PC's code, the friends with their presence, add and remove.
+/// The friends drawer: the RyuNET friends with their presence and the requests; send a request by
+/// nickname, accept or decline one, remove a friend.
 void FriendsDrawer() {
-    App& a = g_app;
     const float s = g_ui_scale;
     const float dt = std::min(ImGui::GetIO().DeltaTime * 7.0f, 1.0f);
     g_drawer += ((g_drawer_open ? 1.0f : 0.0f) - g_drawer) * dt;
@@ -4721,10 +4772,14 @@ void FriendsDrawer() {
     ImGui::PushFont(DisplayFont(), 24.0f * s);
     ImGui::TextColored(kYellow, "%s", T("الأصدقاء", "FRIENDS"));
     ImGui::PopFont();
-    int online = 0;
-    for (const auto& f : g_friends) online += f.online ? 1 : 0;
+    int online = 0, friends = 0;
+    for (const auto& f : g_friends)
+        if (!f.incoming && !f.outgoing) {
+            ++friends;
+            online += f.online ? 1 : 0;
+        }
     char count[32];
-    std::snprintf(count, sizeof count, "%d/%zu", online, g_friends.size());
+    std::snprintf(count, sizeof count, "%d/%d", online, friends);
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 wp = ImGui::GetWindowPos();
@@ -4733,10 +4788,13 @@ void FriendsDrawer() {
         dl->AddText(ImVec2(wp.x + 275 * s - t.x * 0.5f, wp.y + 28 * s - t.y * 0.5f), IM_COL32(0x10, 0x10, 0x2A, 0xFF), count);
     }
     const auto st = launcher_online::GetStatus();
-    ImGui::TextColored(kGrey, "%s", !OnlineOn() ? T("الأونلاين مطفأ (الإعدادات)", "Online is off (SETTINGS)")
-                                    : st.busy   ? T("جارٍ الاتصال...", "Connecting...")
-                                    : st.running ? T("أونلاين", "Online")
-                                                 : T("خدمة الأونلاين لم تبدأ", "Online service not started"));
+    const std::string state_line = !OnlineOn() ? T("الأونلاين مطفأ (الإعدادات)", "Online is off (SETTINGS)")
+                                 : st.busy     ? T("جارٍ الاتصال...", "Connecting...")
+                                 : st.running  ? std::string(T("أونلاين باسم ", "Online as ")) + PlayerName()
+                                               : OnlineText(st.error.empty() ? "Not connected." : st.error);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(kGrey, "%s", state_line.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::BeginChild("list", ImVec2(0, 250.0f * s));
     if (g_friends.empty()) {
         ImGui::Dummy(ImVec2(0, 70.0f * s));
@@ -4751,63 +4809,61 @@ void FriendsDrawer() {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 40 * s), IM_COL32(0x0E, 0x12, 0x33, 0xFF), 10.0f * s);
         if (i == g_friend_selected) dl->AddRect(p, ImVec2(p.x + w, p.y + 40 * s), Col(kYellow), 10.0f * s, 0, 2.0f * s);
-        const ImU32 dot = f.in_game ? Col(kGreen) : f.online ? Col(kBlue) : IM_COL32(0x55, 0x5D, 0x80, 0xFF);
+        const ImU32 dot = f.incoming ? Col(kPink) : f.in_room ? Col(kGreen) : f.online ? Col(kBlue) : IM_COL32(0x55, 0x5D, 0x80, 0xFF);
         dl->AddRectFilled(ImVec2(p.x + 7 * s, p.y + 6 * s), ImVec2(p.x + 35 * s, p.y + 34 * s), dot, 9.0f * s);
-        const std::string initial = f.label.substr(0, 1);
+        const std::string initial = f.name.substr(0, 1);
         const ImVec2 t = DisplayFont()->CalcTextSizeA(17.0f * s, FLT_MAX, 0, initial.c_str());
         dl->AddText(DisplayFont(), 17.0f * s, ImVec2(p.x + 21 * s - t.x * 0.5f, p.y + 20 * s - t.y * 0.5f + 1 * s),
                     IM_COL32(0x10, 0x10, 0x2A, 0xFF), initial.c_str());
-        dl->AddText(ImVec2(p.x + 46 * s, p.y + 2 * s), IM_COL32(255, 255, 255, 255), f.label.c_str());
-        const char* state = f.in_game ? T("داخل اللعبة", "In game")
-                          : f.online ? T("أونلاين (اللعبة مغلقة)", "Online (game closed)")
-                          : !f.named && st.running ? T("غير متصل · يجب أن يضيف كودك", "Offline · must add your code")
-                                                   : T("بدون اتصال", "Offline");
-        dl->AddText(ImGui::GetFont(), 13.0f * s, ImVec2(p.x + 46 * s, p.y + 21 * s), f.in_game ? Col(kGreen) : Col(kGrey), state);
+        dl->AddText(ImVec2(p.x + 46 * s, p.y + 2 * s), IM_COL32(255, 255, 255, 255), f.name.c_str());
+        const char* state = f.incoming  ? T("طلب صداقة · اقبله أو ارفضه", "Friend request · accept or decline")
+                          : f.outgoing  ? T("بانتظار موافقته", "Waiting for their answer")
+                          : f.in_room   ? T("في غرفة", "In a room")
+                          : f.online    ? T("أونلاين", "Online")
+                                        : T("بدون اتصال", "Offline");
+        dl->AddText(ImGui::GetFont(), 13.0f * s, ImVec2(p.x + 46 * s, p.y + 21 * s),
+                    f.incoming ? Col(kPink) : f.in_room ? Col(kGreen) : Col(kGrey), state);
         ImGui::PopID();
     }
     ImGui::EndChild();
-    // Copy the own code, add one, remove the selected friend.
-    ImGui::PushStyleColor(ImGuiCol_Button, kBlue);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.88f, 1.0f, 1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.70f, 0.90f, 1));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.18f, 1));
-    ImGui::PushStyleColor(ImGuiCol_Border, kBlue);
-    if (ImGui::Button(T("نسخ كودي", "COPY MY CODE"), ImVec2(-FLT_MIN, 32.0f * s))) {
-        const std::string code = launcher_online::OwnCode(a.root);
-        const bool ok = !code.empty() && CopyToClipboard(code);
-        g_friends_notice = ok ? T("تم نسخ الكود. يجب أن يضيف كل منكما الآخر.", "Code copied. You must add each other.")
-                              : T("تعذّر نسخ الكود.", "Could not copy the code.");
-        g_friends_notice_error = !ok;
-    }
-    ImGui::PopStyleColor(5);
-    ImGui::Spacing();
-    ImGui::TextColored(kGrey, "%s", T("إضافة صديق", "ADD A FRIEND"));
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##code", T("الصق كوده هنا", "Paste their code here"), g_friend_code, sizeof g_friend_code);
+    const bool ready = OnlineOn() && st.running;
+    const launcher_online::Friend* selected =
+        g_friend_selected >= 0 && g_friend_selected < int(g_friends.size()) ? &g_friends[size_t(g_friend_selected)] : nullptr;
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-    ImGui::PushStyleColor(ImGuiCol_Button, kBlue);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.88f, 1.0f, 1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.70f, 0.90f, 1));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.18f, 1));
-    ImGui::PushStyleColor(ImGuiCol_Border, kBlue);
-    if (ImGui::Button(T("إضافة", "ADD"), ImVec2(half, 32.0f * s))) {
-        const std::string error = launcher_online::AddFriend(a.root, g_friend_code);
-        g_friends_notice = error.empty() ? T("تمت إضافة الصديق.", "Friend added.") : OnlineText(error);
-        g_friends_notice_error = !error.empty();
-        if (error.empty()) g_friend_code[0] = 0;
-        RefreshFriends(true);
+    auto blue = [] {
+        ImGui::PushStyleColor(ImGuiCol_Button, kBlue);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.45f, 0.88f, 1.0f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.70f, 0.90f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.06f, 0.08f, 0.18f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Border, kBlue);
+    };
+    // The selected row: accept or decline a request, else remove (a friend or one's own request).
+    ImGui::BeginDisabled(!ready || !selected);
+    if (selected && selected->incoming) {
+        blue();
+        if (ImGui::Button(T("قبول", "ACCEPT"), ImVec2(half, 32.0f * s))) launcher_online::FriendAction("accept", selected->name);
+        ImGui::PopStyleColor(5);
+        ImGui::SameLine();
+        if (ImGui::Button(T("رفض", "DECLINE"), ImVec2(half, 32.0f * s))) launcher_online::FriendAction("decline", selected->name);
+    } else if (ImGui::Button(T("حذف المحدد", "REMOVE SELECTED"), ImVec2(-FLT_MIN, 32.0f * s)) && selected) {
+        launcher_online::FriendAction("remove", selected->name);
+    }
+    ImGui::EndDisabled();
+    ImGui::Spacing();
+    ImGui::TextColored(kGrey, "%s", T("إضافة صديق باسمه أونلاين", "ADD A FRIEND BY NICKNAME"));
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##nick", T("اسمه أونلاين", "Their nickname"), g_friend_code, 17,
+                             ImGuiInputTextFlags_CallbackCharFilter, [](ImGuiInputTextCallbackData* d) -> int {
+                                 const ImWchar c = d->EventChar;
+                                 return (c < 128 && (std::isalnum(int(c)) || c == '_' || c == '-')) ? 0 : 1;
+                             });
+    ImGui::BeginDisabled(!ready || std::strlen(g_friend_code) < 3);
+    blue();
+    if (ImGui::Button(T("إرسال طلب صداقة", "SEND FRIEND REQUEST"), ImVec2(-FLT_MIN, 32.0f * s))) {
+        launcher_online::FriendAction("request", g_friend_code);
+        g_friend_code[0] = 0;
     }
     ImGui::PopStyleColor(5);
-    ImGui::SameLine();
-    ImGui::BeginDisabled(g_friend_selected < 0);
-    if (ImGui::Button(T("حذف", "REMOVE"), ImVec2(half, 32.0f * s)) && g_friend_selected >= 0) {
-        const auto row = g_friends[size_t(g_friend_selected)];
-        launcher_online::RemoveFriend(a.root, row.code);
-        g_friends_notice = row.label + T(" تم حذفه.", " removed.");
-        g_friends_notice_error = false;
-        g_friend_selected = -1;
-        RefreshFriends(true);
-    }
     ImGui::EndDisabled();
     if (!g_friends_notice.empty()) {
         ImGui::PushTextWrapPos(0.0f);
@@ -5095,8 +5151,8 @@ void LoadState() {
     }
     StartCheck();
     StartProbe();
-    // Multiplayer Online was on: this PC's service starts with the launcher (CTRNativePorted).
-    if (OnlineOn()) launcher_online::Start(a.root, PlayerName());
+    // Multiplayer Online was on: the server and the nickname are checked in the background.
+    StartOnline();
 }
 
 // ---------------------------------------------------------------------------------------------

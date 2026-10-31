@@ -1,28 +1,49 @@
 # Online play
 
 This package is CTR-NitroFueled-PC (same runtime, renderer, upscalers and settings) with the
-serverless online play of [CTRNativePorted](https://github.com/guzuold/CTRNativePorted) and a
-launcher in its "Nitro Cinema" style.
+online play of [OCTR-NitroFueled-PC](https://github.com/Ryu7w7/OCTR-NitroFueled-PC) on the
+RyuNET community server, and a launcher in the "Nitro Cinema" style.
 
 ## How to play online
 
-1. **SETTINGS → ONLINE & MULTI**: turn on **Multiplayer Online** and choose your player name
-   (3–16 letters, digits, `-` or `_`). The launcher starts this PC's online service.
-2. **FRIENDS** (top right): **COPY MY CODE**, send it to your friend, paste theirs and press
-   **ADD**. You must add each other.
-3. **PLAY**. Invite or JOIN friends from the game's own friends list, or use
-   *Online > Matchmaking* for public races.
+1. **SETTINGS → ONLINE & MULTI**: turn on **Multiplayer Online** and choose your own nickname
+   (3–16 letters, digits, `-` or `_`; shared names such as Player or Guest are refused). The
+   launcher checks it on the server and registers it for this PC. The server is
+   `octr.ryu7w7.xyz` unless you enter another RyuNET server.
+2. **FRIENDS** (top right): type a friend's nickname and **SEND FRIEND REQUEST**; accept or
+   decline the requests you receive there too.
+3. **PLAY**. From the game's own menus: public matches, private rooms, your friends list
+   (invite or join them) and the Pit Stop.
 
 ## What it is
 
-- No central server: each player's launcher runs its own service; the services find each other
-  on the BitTorrent DHT and talk over signed requests. Race traffic is the game's own UDP,
-  directly between the games.
-- Compatible with CTRNativePorted: the same friend codes, friends and public matchmaking.
-- Sony and Activision servers are never contacted. The Demonware traffic key is replaced in
-  memory with your own service's key (`src/runtime_online.c`); the game files are not changed.
-- With Multiplayer Online off, nothing of this loads: the game runs exactly as
+- The game's Demonware, PSN and friends traffic goes to the RyuNET server (a Demonware server
+  written for this game); Sony and Activision servers are never contacted. The server's key
+  replaces Demonware's in the executable for online starts only
+  (`patches/CrashTeamRacingOnline*.xml`, in memory; the game files are not changed).
+- Races connect the players' games directly (UDP 3074), as on the PS4, with the server's relay
+  for players who cannot reach each other.
+- With Multiplayer Online off, nothing of this is used: the game runs exactly as
   CTR-NitroFueled-PC.
+
+## Your nickname
+
+The first installation that plays with a nickname keeps it, through the key in
+`ryunet_online.key` (next to the launcher, with a copy in `%APPDATA%\CTR-NitroFueled-PC`).
+**Never share that file.** Requests to the server are signed with a hash of it; the key itself
+never leaves your PC. Unzipping a new version over the folder, or into a new folder on the same
+PC, keeps the nickname.
+
+## Pit Stop
+
+Online, the Pit Stop uses the items bought on the server (tied to your nickname). *Pit Stop: my
+save's items* (ONLINE & MULTI) uses the ones unlocked in your own save instead.
+
+## Connection problems
+
+Some home connections (strict NAT, mobile data, carrier-grade NAT) cannot reach some other
+players directly. If a match keeps failing with the same people, enabling UPnP on your router or
+forwarding UDP 3074 to your PC helps.
 
 ## Launcher language
 
@@ -32,19 +53,9 @@ Technical terms stay in English. Arabic is shaped and laid out right to left by
 (`gpu/patches/imgui`, unused by the game's own overlay); titles use Lemonada (OFL-1.1, its
 Arabic presentation forms mapped by `tools/arabic_presentation_forms.py`).
 
-## Files and limits
-
-- Identity, friends and the Pit Stop wallet: `runtime\user\` (keep it to keep your code; copy
-  `runtime\user\identity` and `runtime\user\online` from CTRNativePorted, with both launchers
-  closed, to keep the code you have there).
-- One online launcher per PC at a time (the service ports are fixed).
-- The router is asked to open the ports with UPnP. Public matchmaking needs at least one player
-  reachable from the Internet; strict or carrier-grade NAT may prevent direct races.
-- Races with more than two players are not verified upstream yet.
-
 ## Sources
 
-`online/` holds the online service (`online_server/`), the guest functions (`hle/`,
-`ctr_online.dll`) and the DHT (`dht/`, jech/dht, MIT), from CTRNativePorted (GPL-2.0), with the
-changes needed to build them with MSYS2 CLANG64. `ctr_online_server.exe` is the same service on
-its own.
+The online runtime is `src/runtime_net*.c`, `runtime_http.c`, `runtime_np_online.c`,
+`runtime_friends.c` and `runtime_ryunet.c` (its services), with `run.py setup_online` and
+`launcher/windows/online.cpp`, from OCTR-NitroFueled-PC (GPL-2.0) by Ryu7w7 and its
+contributors.

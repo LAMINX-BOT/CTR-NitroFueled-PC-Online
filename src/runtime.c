@@ -235,9 +235,6 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (runtime_nid_equals(name,"p5EcQeEeJAE#libkernel")) return (uintptr_t)guest_set_heap_api;
     /* Everything else a libc import needs comes from the linked libc.prx itself. */
     if (libc_import(name)) return 0;
-    /* CTR_ONLINE=1 (launcher): Net, NP, Http, WebApi and the invitation flow from ctr_online.dll (runtime_online.c). */
-    uintptr_t online = runtime_online_resolve(name);
-    if (online) return online;
     uintptr_t mutex = runtime_mutex_resolve(name);
     if (mutex) return mutex;
     uintptr_t thread = runtime_thread_resolve(name);

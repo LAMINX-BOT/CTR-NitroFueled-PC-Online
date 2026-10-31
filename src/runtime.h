@@ -92,12 +92,11 @@ uintptr_t runtime_kernel_resolve(const char *name);
 void runtime_kernel_thread_exit(void);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
-/* SacredFire: online play (runtime_net.c); answers nothing unless BB_ONLINE_SERVER is set. */
+/* Online play on a RyuNET server (runtime_ryunet.c, from Ryu7w7/OCTR-NitroFueled-PC); answers
+ * nothing unless BB_ONLINE=1, so runtime_services.c's offline contracts stay. */
 uintptr_t runtime_net_resolve(const char *name);
-/* CTR-NitroFueled-PC: online play (runtime_online.c), only with CTR_ONLINE=1. */
-uintptr_t runtime_online_resolve(const char *name);
-/* Invitation (0xa2) and profile (0xb2) dialog module lifecycle in ctr_online.dll; 0 when off. */
-int32_t runtime_online_module(uint16_t id, int load);
+/* The game's title ID: online friends are shown in this game (EU CUSA14876, USA CUSA13795). */
+void runtime_np_set_title(const char *title_id);
 void runtime_file_report(void);
 void runtime_file_configure(const char *app0, const char *user);
 int runtime_file_mount(const char *guest, const char *host);

@@ -43,6 +43,11 @@ gpu/shim/bbport_gnm_table.inc
 /launcher.ini
 /CUSA13795*/
 *.pkg
+# Online (RyuNET): this installation's key keeps the nickname (never share it), and what run.py
+# and the game write for a session
+ryunet_online.key
+host_overrides.json
+/sessions/
 
 # CTR-NitroFueled-PC Online: the launcher artwork is part of the source
 !launcher/windows/assets/**

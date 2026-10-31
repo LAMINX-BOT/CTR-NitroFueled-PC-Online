@@ -11,8 +11,12 @@ previous process to end first.
 Works from the MSYS2 CLANG64 Python or a python.org Python.
 """
 import ctypes
+import hashlib
+import hmac
+import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
@@ -216,17 +220,324 @@ uw_refresh = uw_refresh_native
 uw_shaders = uw_shaders_native
 
 
-# Online play (docs/sacredfire/15-online.md): off unless bbport.ini's online_server (or
-# BB_ONLINE_SERVER) names a private server. Every name the game resolves then answers that
-# server; nothing else is reachable. online_id is the PSN name shown to other players.
-def apply_online(env, config):
-    for key, variable in (('online_server', 'BB_ONLINE_SERVER'), ('online_http_port', 'BB_ONLINE_HTTP_PORT'),
-                          ('online_id', 'BB_ONLINE_ID'), ('online_allow', 'BB_ONLINE_ALLOW')):
-        value = ini_value(config, key)
-        if value and not env.get(variable):
+# Online play on a RyuNET server (Ryu7w7/OCTR-NitroFueled-PC, GPL-2.0).
+DEFAULT_SERVER = 'octr.ryu7w7.xyz'
+# The server derives the player's ID from the nickname, so everyone left on a shared default
+# name was the same player online (one wallet, and matchmaking evicting each other). These names
+# are refused online; the launcher asks for a real one before it starts the game.
+RESERVED_NICKS = {'ryupc', 'ryunet', 'player', 'jugador', 'guest'}
+
+
+def nick_ok(name):
+    return (3 <= len(name) <= 16 and all(c.isascii() and (c.isalnum() or c in '_-') for c in name)
+            and name.lower() not in RESERVED_NICKS)
+
+
+def key_store():
+    """Where this PC keeps its keys outside the game folders, so that a deleted, moved or
+    re-downloaded folder keeps the nicknames: %APPDATA% on Windows (as the launcher keeps them),
+    the XDG data folder (~/.local/share) on Linux. None when there is no such folder."""
+    if os.name == 'nt':
+        base = os.environ.get('APPDATA')
+    else:
+        base = os.environ.get('XDG_DATA_HOME') or (os.path.join(os.path.expanduser('~'), '.local', 'share')
+                                                   if os.environ.get('HOME') else None)
+    return Path(base) / 'CTR-NitroFueled-PC' if base else None
+
+
+def valid_key(k):
+    return len(k) == 64 and all(c in '0123456789abcdef' for c in k)
+
+
+def known_keys():
+    """Every key used on this PC (ryunet_online_keys.txt next to the backup; the Windows
+    launcher's KnownKeys): a nickname this folder's key does not own may be another folder's."""
+    store = key_store()
+    try:
+        lines = (store / 'ryunet_online_keys.txt').read_text(encoding='ascii', errors='replace').split()
+    except (OSError, TypeError):
+        return []
+    keys = []
+    for k in (line.strip().lower() for line in lines):
+        if valid_key(k) and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def remember_key(key):
+    store = key_store()
+    if not store or not valid_key(key) or key in known_keys():
+        return
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        with open(store / 'ryunet_online_keys.txt', 'a', encoding='ascii') as f:
+            f.write(key + '\n')
+    except OSError:
+        pass
+
+
+def use_key(data, key):
+    """This folder plays with another of this PC's keys from now on. True when saved."""
+    try:
+        (Path(data) / 'ryunet_online.key').write_text(key + '\n', encoding='ascii')
+    except OSError:
+        return False
+    return True
+
+
+def online_key(data):
+    """This installation's secret: the server lets the first key to use a nickname keep it, so
+    nobody else can play under it. Created once, next to run.py; the launcher reads the same
+    file. Copying the folder to another PC keeps the nicknames; losing the file loses them."""
+    path = Path(data) / 'ryunet_online.key'
+    # A second copy outside the game folder (key_store).
+    store = key_store()
+    backup = store / 'ryunet_online.key' if store else None
+
+    def read(p):
+        try:
+            k = p.read_text(encoding='ascii', errors='replace').strip().lower() if p else ''
+        except OSError:
+            return ''
+        return k if valid_key(k) else ''
+
+    key = read(path) or read(backup) or secrets.token_hex(32)
+    if read(path) != key:
+        try:
+            path.write_text(key + '\n', encoding='ascii')
+        except OSError as e:
+            say(f'Could not save the online key ({e}): the nickname cannot be kept for this installation.')
+            return ''
+    if backup and not read(backup):
+        try:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_text(key + '\n', encoding='ascii')
+        except OSError:
+            pass
+    remember_key(read(backup))
+    remember_key(key)
+    return key
+
+
+def server_key(key, host):
+    """What one server sees of the key: HMAC-SHA256(key, host). Each server gets a different
+    value, so a server you try (or one an invite points to) cannot reuse it on another to take
+    your nicknames. The launcher derives it the same way for its nickname check."""
+    return hmac.new(bytes.fromhex(key), host.strip().lower().encode('utf-8'), hashlib.sha256).hexdigest()
+
+
+def key_hash(skey):
+    """What the server stores of a server key (nick_claims.go keyHash): the key of signatures."""
+    return hashlib.sha256(skey.strip().lower().encode('ascii')).hexdigest()
+
+
+# Seconds to add to this PC's clock to get the RyuNET server's. Signatures carry the time and the
+# server takes them only within 5 minutes of its own clock: with the PC's clock off, every signed
+# request was refused ("nickname signature out of time") and the nickname read as taken.
+SERVER_CLOCK_OFFSET = 0
+
+
+def note_server_clock(reply):
+    """An answer of the RyuNET server (a urllib response or HTTPError): its Date header sets
+    SERVER_CLOCK_OFFSET."""
+    global SERVER_CLOCK_OFFSET
+    import email.utils
+    try:
+        server = email.utils.parsedate_to_datetime(reply.headers.get('Date', '')).timestamp()
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return
+    offset = round(server - time.time())
+    # The header has whole seconds: a few seconds either way change nothing.
+    SERVER_CLOCK_OFFSET = offset if abs(offset) > 5 else 0
+
+
+def proof_header(khash, method, target):
+    """X-RyuNET-Proof for one request (the server's nick_proof.go): signed with the key's hash, so
+    the key never crosses the network, and good once, for a few minutes of the server's time."""
+    ts, nonce = str(int(time.time()) + SERVER_CLOCK_OFFSET), secrets.token_hex(16)
+    mac = hmac.new(khash.encode('ascii'), f'{ts}\n{nonce}\n{method}\n{target}'.encode('utf-8'),
+                   hashlib.sha256).hexdigest()
+    return f'1.{ts}.{nonce}.{mac}'
+
+
+HTTPS_PORT = 443      # the server's nginx: /ryunet/ by HTTPS (tests point it elsewhere)
+HTTPS_FAILED = set()  # servers whose HTTPS failed this run: their next requests go to the port
+
+
+def ryunet_json(host, port, target, timeout, method='GET', headers=None, body=None):
+    """A request to the RyuNET server and its JSON answer, with the reply (for its Date header).
+    By HTTPS on the server's name first (443, where its nginx passes /ryunet/ to the server): a
+    filter on the way cannot rewrite it, and networks that only let 80/443 out reach it. Then by
+    plain HTTP on the port, by name and by address when something on the way answers for the
+    name: an ISP's filter that redirects to its own warning page (Spectrum's Security Shield) or
+    serves one. The game's own requests do the same (src/runtime_http.c). headers(method, target)
+    makes each attempt's headers, so a signature is never sent twice. OSError when none works."""
+    import ipaddress
+    import socket
+    import urllib.error
+    import urllib.request
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None  # the server never redirects: a redirect comes from something on the way
+
+    opener = urllib.request.build_opener(NoRedirect)
+    urls = []
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:  # a name: a certificate can vouch for it (never for a bare address)
+        if host not in HTTPS_FAILED:
+            urls.append((f'https://{host}' + (f':{HTTPS_PORT}' if HTTPS_PORT != 443 else '') + target, True))
+    urls.append((f'http://{host}:{port}{target}', False))
+    try:
+        address = socket.gethostbyname(host)
+        if address != host:
+            urls.append((f'http://{address}:{port}{target}', False))
+    except OSError:
+        pass
+    failure = OSError(f'{host}: no answer')
+    for url, secure in urls:
+        name = url.split('/')[2]
+        request = urllib.request.Request(url, method=method,
+                                         data=body if body is not None else (b'' if method == 'POST' else None),
+                                         headers={**(headers(method, target) if headers else {}),
+                                                  **({'Content-Type': 'application/json'} if body is not None else {})})
+        try:
+            with opener.open(request, timeout=timeout) as reply:
+                if 'json' not in (reply.headers.get('Content-Type') or ''):
+                    failure = OSError(f'{name}: answered by something on the way, not the server')
+                    HTTPS_FAILED.update([host] if secure else [])
+                    continue
+                return json.loads(reply.read(1 << 16)), reply  # the theme carries the item rules
+        except urllib.error.HTTPError as error:
+            if secure and 'json' not in (error.headers.get('Content-Type') or ''):
+                HTTPS_FAILED.add(host)  # not the server's answer (no /ryunet/ there yet): the port
+                failure = OSError(f'{name}: HTTPS answered {error.code}')
+                continue
+            if 300 <= error.code < 400:
+                failure = OSError(f'{name}: redirected to {error.headers.get("Location")}')
+                continue
+            raise
+        except OSError as error:  # no 443, a certificate that does not verify, a clock far off
+            if not secure:
+                raise
+            HTTPS_FAILED.add(host)
+            failure = OSError(f'{name}: HTTPS failed ({error})')
+    raise failure
+
+
+def claim_nick(host, port, name, khash):
+    """Registers this installation for a free nickname, before the game logs in with it (the
+    game's own requests are signed and cannot register). The key's hash crosses the network only
+    here, once. Nothing happens when the server cannot be reached or is older."""
+    import urllib.parse
+    q = urllib.parse.urlencode({'name': name})
+    try:
+        status, _ = ryunet_json(host, port, f'/ryunet/nick?{q}', 4,
+                                headers=lambda m, t: {'X-RyuNET-Proof': proof_header(khash, m, t)})
+        if status.get('status') != 'free':
+            return
+        claimed, _ = ryunet_json(host, port, f'/ryunet/nick/claim?{q}', 4, method='POST',
+                                 headers=lambda m, t: {'X-RyuNET-Proof': proof_header(khash, m, t),
+                                                       'X-RyuNET-Key-Hash': khash})
+        say(f'Nickname {name}: {claimed.get("status")} on {host}')
+    except (OSError, ValueError) as error:
+        say(f'Nickname {name}: could not register it on {host} ({error})')
+
+
+def server_settings(host, port):
+    """What the server announces for every player (GET /ryunet/theme): the season theme, which
+    scripts/patches.py loads in every level (THEME_VALUES), and the seconds an online race goes on
+    after the first player finishes (end_race_patches). {} when it does not answer."""
+    try:
+        settings, reply = ryunet_json(host, port, '/ryunet/theme', 3)
+    except (OSError, ValueError):
+        return {}
+    note_server_clock(reply)
+    return settings if isinstance(settings, dict) else {}
+
+
+def setup_online(env, config, data):
+    """Online play on a RyuNET server (from Ryu7w7/OCTR-NitroFueled-PC): BB_ONLINE=1 (the
+    launcher's Multiplayer Online, or bbport.ini online=1) with a nickname (BB_ONLINE_NAME or
+    online_name=) and a server (BB_ONLINE_SERVER or online_server=, octr.ryu7w7.xyz by default).
+    The game's Demonware, PSN and friends traffic goes to that server; nothing else is contacted.
+    This installation's key (ryunet_online.key) keeps the nickname: requests are signed with
+    its hash for that server and the key itself never leaves the PC."""
+    ini_values = {}
+    try:
+        for l in Path(config).read_text(encoding='utf-8', errors='replace').splitlines():
+            k, sep, v = l.partition('=')
+            if sep and not k.startswith('#'):
+                ini_values[k.strip()] = v.strip()
+    except OSError:
+        pass
+    online = env.get('BB_ONLINE', ini_values.get('online', '0'))
+    if online != '1':
+        env.pop('BB_ONLINE', None)
+        return
+    name = env.get('BB_ONLINE_NAME', ini_values.get('online_name', ini_values.get('user_name', ''))).strip()
+    if not nick_ok(name):
+        fail('Online play needs your own nickname: 3 to 16 letters, digits, _ or -, and not a default '
+             'name like Player. Set it in the launcher (SETTINGS > ONLINE & MULTI).')
+    env['BB_USER_NAME'] = name
+    env['BB_ONLINE'] = '1'
+    env['BB_NET_TRACE'] = '1'
+    server = (env.get('BB_ONLINE_SERVER') or ini_values.get('online_server') or DEFAULT_SERVER).strip()
+    host = server
+    auth_port = env.get('BB_ONLINE_HTTP_PORT', ini_values.get('online_http_port', '8080'))
+    if ':' in server and not server.startswith('['):
+        h, _, p = server.partition(':')
+        if p.isdigit():
+            host = h
+            auth_port = p
+    env['BB_ONLINE_SERVER'] = host
+    env['BB_ONLINE_HTTP_PORT'] = auth_port  # the runtime's own requests (friends, invitations)
+    env['BB_ONLINE_NAME'] = name
+    # The server's answer tells its clock, before anything is signed.
+    server_settings(host, auth_port)
+    if SERVER_CLOCK_OFFSET:
+        env['BB_ONLINE_CLOCK_OFFSET'] = str(SERVER_CLOCK_OFFSET)
+        if abs(SERVER_CLOCK_OFFSET) > 60:
+            minutes = round(abs(SERVER_CLOCK_OFFSET) / 60)
+            say(f"This PC's clock is {minutes} min {'behind' if SERVER_CLOCK_OFFSET > 0 else 'ahead of'} "
+                "the server's: online uses the server's time, but sync it (Windows: Settings > Time > Sync now).")
+    else:
+        env.pop('BB_ONLINE_CLOCK_OFFSET', None)
+    key = online_key(data)
+    env.pop('BB_ONLINE_KEY', None)  # the key is not sent: requests are signed with its hash
+    if key:
+        env['BB_ONLINE_KEYHASH'] = key_hash(server_key(key, host))
+        claim_nick(host, auth_port, name, env['BB_ONLINE_KEYHASH'])
+    # online_inventory=save: keep the Pit Stop items of this save online instead of the ones
+    # bought on the server, which are tied to the nickname.
+    if env.get('BB_ONLINE_INVENTORY', ini_values.get('online_inventory', 'server')).strip().lower() == 'save':
+        env['BB_ONLINE_INVENTORY'] = 'save'
+    else:
+        env.pop('BB_ONLINE_INVENTORY', None)
+    for key_name, variable in (('online_account_id', 'BB_ONLINE_ACCOUNT_ID'), ('online_port', 'BB_ONLINE_PORT'),
+                               ('online_friends', 'BB_ONLINE_FRIENDS')):
+        value = env.get(variable, ini_values.get(key_name, ''))
+        if value:
             env[variable] = value
-    if env.get('BB_ONLINE_SERVER'):
-        say(f'Online: private server {env["BB_ONLINE_SERVER"]} (official servers are never contacted)')
+    # The game's Demonware hosts, answered by the server (src/runtime_net_overrides.c).
+    http = f'http://{host}:{auth_port}'
+    overrides = {name: http for name in (
+        'lavender-ps4-auth3.prod.demonware.net', 'lavender-ps4-auth3.cert.demonware.net',
+        'lavender-ps4-auth3.dev.demonware.net', 'prod.umbrella.demonware.net', 'cert.umbrella.demonware.net',
+        'dev.umbrella.demonware.net', 'prod.uno.demonware.net', 'cert.uno.demonware.net', 'dev.uno.demonware.net',
+        # Telemetry and CDN hosts the game contacts over HTTPS: the server answers 404, which the
+        # game tolerates, and the real servers are never touched.
+        'pipes-prod-glutton.public.aws.demonware.net', 'objectstore.prod.demonware.net',
+        # Demonware friends API (list, invitation, pending, pair): the server's friends handler.
+        'friends.dev.demonware.net')}
+    overrides.update({name: host for name in (
+        'lavender-ps4-lobby.prod.demonware.net', 'lavender-ps4-lobby.cert.demonware.net',
+        'lavender-ps4-lobby.dev.demonware.net', 'stun.us.demonware.net', 'stun.eu.demonware.net',
+        'stun.jp.demonware.net', 'stun.au.demonware.net')})
+    env['BB_DATA_DIR'] = str(data)
+    (data / 'host_overrides.json').write_text(json.dumps(overrides, indent=2) + '\n', encoding='utf-8')
+    say(f'RyuNET Online active -> server {host}:{auth_port}, user {name}')
 
 
 def pump(stream):
@@ -346,7 +657,7 @@ def main():
                    '--dlc-dir', env.get('BB_DLC_DIR', data / 'dlc'))
         env.setdefault('BB_NEO', '0')
         apply_render_res(env, uw_mode.render_config if uw_mode.enabled else config)
-        apply_online(env, config)
+        setup_online(env, config, data)
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
